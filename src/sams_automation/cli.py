@@ -126,6 +126,14 @@ def _cmd_test_proxy(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def _cmd_serve(args: argparse.Namespace) -> int:
+    from .web import serve
+
+    serve(args.config, args.accounts, port=args.port,
+          open_browser=args.open_browser)
+    return 0
+
+
 def _cmd_check(args: argparse.Namespace) -> int:
     """Validate config + accounts and print a summary without touching anything."""
     cfg = load_config(args.config)
@@ -208,6 +216,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     c = sub.add_parser("check", parents=[common], help="Validate config + accounts.")
     c.set_defaults(func=_cmd_check)
+
+    s = sub.add_parser(
+        "serve", parents=[common], help="Open the local web UI in your browser."
+    )
+    s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--no-open", dest="open_browser", action="store_false")
+    s.set_defaults(func=_cmd_serve, open_browser=True)
 
     tp = sub.add_parser(
         "test-proxy",
