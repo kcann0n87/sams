@@ -152,6 +152,22 @@ class SamsFlow:
 
     # -- steps ----------------------------------------------------------------
 
+    # Candidate selectors tried in order (Sam's markup varies / is unknown).
+    EMAIL_CANDIDATES = [
+        "input[type='email']",
+        "input[name='email']",
+        "#email",
+        "input[autocomplete='username']",
+        "input[name='loginId']",
+        "input[name='userId']",
+    ]
+    PASSWORD_CANDIDATES = [
+        "input[type='password']",
+        "input[name='password']",
+        "#password",
+        "input[autocomplete='current-password']",
+    ]
+
     def _login(self, page: Page, account: Account, shared: bool) -> None:
         marker = self.sel.get("logged_in_marker")
 
@@ -161,18 +177,38 @@ class SamsFlow:
             if self.cfg.sams.logout_url:
                 page.goto(self.cfg.sams.logout_url, wait_until="domcontentloaded")
         page.goto(self.cfg.sams.login_url, wait_until="domcontentloaded")
-        self._maybe_captcha(page, account)
-        self._dump(page, "PAGE-login")  # capture the real login page every run
 
         # In ephemeral mode a saved session may already have us logged in.
         if not shared and marker and self._is_visible(page, marker, timeout_ms=4000):
             self._shot(page, account, "already-logged-in")
             return
 
-        self._fill(page, "login_email", account.primary_email)
-        self._fill(page, "login_password", account.primary_password)
+        # Sam's Club fronts the login form with a PerimeterX "press & hold"
+        # challenge. Wait for the real email field to appear, prompting the user
+        # to solve the challenge by hand in the Chrome window; only then fill.
+        email_sel = self._resolve("login_email")
+        candidates = ([email_sel] if email_sel else []) + self.EMAIL_CANDIDATES
+        found = self._wait_for_login_form(page, account, candidates)
+        self._dump(page, "PAGE-login-form")  # capture the real form once visible
+        if not found:
+            raise FlowError(
+                f"Login form never appeared for {account.primary_email} — the "
+                "bot challenge may not have been solved. See the captured page."
+            )
+
+        page.fill(found, account.primary_email)
+        # Password may be on the same page or after a 'continue' click.
+        pwd = self._first_visible(page, self.PASSWORD_CANDIDATES, timeout_ms=3000)
+        if not pwd:
+            self._click_first(page, [self._resolve("login_submit"), "button[type='submit']"])
+            pwd = self._first_visible(page, self.PASSWORD_CANDIDATES,
+                                      timeout_ms=self.cfg.browser.timeout_ms)
+        if not pwd:
+            self._dump(page, "NOTFOUND-password")
+            raise FlowError("Could not find the password field after email.")
+        page.fill(pwd, account.primary_password)
         self._shot(page, account, "login-filled")
-        self._click(page, "login_submit")
+        self._click_first(page, [self._resolve("login_submit"), "button[type='submit']"])
         self._maybe_captcha(page, account)
 
         if marker:
@@ -185,6 +221,39 @@ class SamsFlow:
                     "(logged_in_marker never appeared)."
                 )
         self._shot(page, account, "logged-in")
+
+    def _wait_for_login_form(self, page: Page, account: Account, candidates: list) -> str | None:
+        """Poll for the login field, prompting the user to solve any challenge."""
+        deadline = time.monotonic() + self.cfg.sams.captcha_wait_seconds
+        prompted = False
+        while time.monotonic() < deadline:
+            sel = self._first_visible(page, candidates, timeout_ms=1500)
+            if sel:
+                return sel
+            if not prompted:
+                self._dump(page, "PAGE-login-challenge")
+                print(
+                    "\n[!] Sam's Club is showing a 'press & hold' challenge on the "
+                    "login page.\n    Solve it in the Chrome window that opened; "
+                    "the tool is waiting and will continue automatically.\n"
+                )
+                prompted = True
+            time.sleep(2)
+        return None
+
+    def _first_visible(self, page: Page, selectors: list, timeout_ms: int) -> str | None:
+        """Return the first selector that becomes visible, else None."""
+        per = max(500, timeout_ms // max(1, len([s for s in selectors if s])))
+        for sel in selectors:
+            if sel and self._is_visible(page, sel, timeout_ms=per):
+                return sel
+        return None
+
+    def _click_first(self, page: Page, selectors: list) -> None:
+        for sel in selectors:
+            if sel and self._is_visible(page, sel, timeout_ms=1500):
+                page.click(sel)
+                return
 
     def _open_add_member(self, page: Page, account: Account) -> None:
         page.goto(self.cfg.sams.add_member_url, wait_until="domcontentloaded")
