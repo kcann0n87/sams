@@ -1,0 +1,6 @@
+# Runtime dependencies
+playwright>=1.44
+PyYAML>=6.0
+
+# After installing, run once:
+#   playwright install chromium

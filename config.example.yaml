@@ -1,0 +1,101 @@
+# =============================================================================
+# Sam's Club secondary-membership automation — configuration
+# Copy this file to `config.yaml` and fill in your real values.
+# config.yaml is git-ignored so your credentials never get committed.
+# =============================================================================
+
+imap:
+  # iCloud catch-all mailbox. With an iCloud+ custom domain, every message sent
+  # to anything@yourdomain.com lands in this one inbox; we filter by "To:".
+  #
+  #   host      -> always imap.mail.me.com for iCloud
+  #   username  -> your primary Apple ID address (usually the @icloud.com one),
+  #               NOT the custom-domain alias
+  #   password  -> an APP-SPECIFIC PASSWORD, generated at appleid.apple.com
+  #               (Sign-In and Security > App-Specific Passwords). Your normal
+  #               Apple ID password will NOT work over IMAP.
+  host: "imap.mail.me.com"
+  port: 993
+  ssl: true
+  username: "you@icloud.com"
+  password: "xxxx-xxxx-xxxx-xxxx"   # app-specific password
+  mailbox: "INBOX"
+
+  # Only accept emails from these senders (substring match, case-insensitive).
+  # Prevents grabbing a code from an unrelated message.
+  from_contains:
+    - "samsclub.com"
+    - "sams club"
+
+  # How long to wait for the verification email to arrive, and how often to poll.
+  timeout_seconds: 180
+  poll_interval_seconds: 5
+
+verification:
+  # "code"  -> the email contains a numeric code you type into a field.
+  # "link"  -> the email contains an activation URL the browser must open.
+  # Set this once you've seen a real Sam's Club verification email.
+  mode: "code"
+
+  # Regex that captures the numeric code (used when mode = "code").
+  # Default grabs a standalone 6-digit number. The first capture group is used.
+  code_regex: '\b(\d{6})\b'
+
+  # Regex that captures the activation link (used when mode = "link").
+  # Default grabs any samsclub.com URL. The first capture group is used.
+  link_regex: '(https?://[^\s"''<>]*samsclub\.com[^\s"''<>]*)'
+
+browser:
+  headless: false          # Keep visible so you can solve CAPTCHAs.
+  slow_mo_ms: 150          # Small delay between actions to look less robotic.
+  timeout_ms: 30000        # Default per-action timeout.
+  # Reuse a saved login session per primary account to cut down on CAPTCHAs.
+  persist_sessions: true
+  state_dir: "state"       # Where per-account storage_state json files live.
+  screenshot_dir: "screenshots"
+
+pacing:
+  # Random wait (seconds) between finishing one account and starting the next,
+  # so the run doesn't hammer the site at machine speed.
+  between_accounts_min: 20
+  between_accounts_max: 60
+
+# -----------------------------------------------------------------------------
+# Sam's Club page map. These are PLACEHOLDERS. After we watch one real run in a
+# visible browser, we'll replace each selector/URL with the real one. Everything
+# the browser touches is here so no Python needs editing to fix a selector.
+# -----------------------------------------------------------------------------
+sams:
+  login_url: "https://www.samsclub.com/login"
+  add_member_url: "https://www.samsclub.com/account/membership/add-member"
+
+  selectors:
+    # --- Login page ---
+    login_email: "input[name='email']"
+    login_password: "input[name='password']"
+    login_submit: "button[type='submit']"
+    # An element that only exists once login succeeded (used to confirm we're in).
+    logged_in_marker: "[data-testid='account-menu']"
+
+    # --- Add-a-member form ---
+    add_first_name: "input[name='firstName']"
+    add_last_name: "input[name='lastName']"
+    add_email: "input[name='email']"
+    add_address1: "input[name='address1']"
+    add_address2: "input[name='address2']"
+    add_city: "input[name='city']"
+    add_state: "select[name='state']"
+    add_zip: "input[name='zip']"
+    add_submit: "button[type='submit']"
+
+    # --- Verification-code entry (mode = "code") ---
+    code_input: "input[name='verificationCode']"
+    code_submit: "button[type='submit']"
+
+    # An element that only appears once the secondary member is confirmed.
+    success_marker: "text=Member added"
+
+  # CAPTCHA handling (headful only). When we detect this selector, the script
+  # pauses and waits for you to solve it, then resumes. Leave empty to disable.
+  captcha_marker: "iframe[src*='captcha']"
+  captcha_wait_seconds: 300
