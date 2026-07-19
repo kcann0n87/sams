@@ -56,12 +56,20 @@ class SamsConfig:
 
 
 @dataclass
+class ProxyConfig:
+    enabled: bool
+    file: str
+    rotation: str  # "sticky" | "round_robin" | "random"
+
+
+@dataclass
 class Config:
     imap: ImapConfig
     verification: VerificationConfig
     browser: BrowserConfig
     pacing: PacingConfig
     sams: SamsConfig
+    proxies: ProxyConfig
 
 
 @dataclass
@@ -119,6 +127,7 @@ def load_config(path: str | Path) -> Config:
     browser = section("browser")
     pacing = section("pacing")
     sams = section("sams")
+    proxies = raw.get("proxies") or {}
 
     cfg = Config(
         imap=ImapConfig(
@@ -158,11 +167,21 @@ def load_config(path: str | Path) -> Config:
             captcha_marker=sams.get("captcha_marker", ""),
             captcha_wait_seconds=int(sams.get("captcha_wait_seconds", 300)),
         ),
+        proxies=ProxyConfig(
+            enabled=bool(proxies.get("enabled", False)),
+            file=proxies.get("file", "proxies.txt"),
+            rotation=proxies.get("rotation", "sticky"),
+        ),
     )
 
     if cfg.verification.mode not in ("code", "link"):
         raise ValueError(
             f"verification.mode must be 'code' or 'link', got '{cfg.verification.mode}'"
+        )
+    if cfg.proxies.rotation not in ("sticky", "round_robin", "random"):
+        raise ValueError(
+            "proxies.rotation must be 'sticky', 'round_robin', or 'random', "
+            f"got '{cfg.proxies.rotation}'"
         )
     return cfg
 

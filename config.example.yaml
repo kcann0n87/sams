@@ -60,6 +60,19 @@ pacing:
   between_accounts_min: 20
   between_accounts_max: 60
 
+proxies:
+  # Route each account through a proxy so you're not hitting Sam's Club from the
+  # same IP for every membership. Set enabled: false to run without proxies.
+  enabled: true
+  file: "proxies.txt"        # one proxy per line; git-ignored (see proxies.example.txt)
+  # How a proxy is chosen per account:
+  #   sticky      -> the SAME proxy every run for a given primary account
+  #                 (recommended: a stable IP per account looks natural; an
+  #                  account that hops IPs run-to-run looks suspicious)
+  #   round_robin -> cycle through the list across accounts
+  #   random      -> pick one at random per account
+  rotation: "sticky"
+
 # -----------------------------------------------------------------------------
 # Sam's Club page map. These are PLACEHOLDERS. After we watch one real run in a
 # visible browser, we'll replace each selector/URL with the real one. Everything

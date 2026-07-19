@@ -1,0 +1,21 @@
+# Paste your proxies here, one per line, then save this as `proxies.txt`
+# (proxies.txt is git-ignored so your list never gets committed).
+#
+# Blank lines and lines starting with # are ignored.
+#
+# Any of these formats works. If you don't include a scheme, http is assumed:
+#
+#   host:port
+#   host:port:username:password
+#   username:password@host:port
+#   http://username:password@host:port
+#   https://username:password@host:port
+#   socks5://host:port
+#   socks5://username:password@host:port
+#
+# Examples (replace with your real proxies):
+198.51.100.10:8080
+198.51.100.11:8080:myuser:mypass
+myuser:mypass@198.51.100.12:8080
+http://myuser:mypass@198.51.100.13:3128
+socks5://198.51.100.14:1080

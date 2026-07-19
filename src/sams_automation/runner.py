@@ -12,6 +12,7 @@ from playwright.sync_api import sync_playwright
 
 from .config import Account, Config
 from .imap_client import ImapClient, VerificationTimeout
+from .proxies import ProxyPool, load_proxies
 from .sams_flow import FlowError, SamsFlow
 
 RESULTS_FILE = "results.csv"
@@ -77,43 +78,49 @@ def run(
 
     print(f"Processing {len(queue)} account(s).\n")
 
+    proxy_pool: ProxyPool | None = None
+    if cfg.proxies.enabled:
+        proxies = load_proxies(cfg.proxies.file)  # raises if the file is missing
+        if not proxies:
+            raise ValueError(
+                f"proxies.enabled is true but no valid proxies were found in "
+                f"{cfg.proxies.file}."
+            )
+        proxy_pool = ProxyPool(proxies, cfg.proxies.rotation)
+        print(
+            f"Using {len(proxies)} prox(ies), rotation={cfg.proxies.rotation}.\n"
+        )
+
     imap = ImapClient(cfg.imap)
     imap.connect()
     ok = fail = 0
     try:
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(
-                headless=cfg.browser.headless,
-                slow_mo=cfg.browser.slow_mo_ms,
-            )
-            flow = SamsFlow(cfg, browser, imap)
-            try:
-                for i, account in enumerate(queue):
-                    print(f"[{i + 1}/{len(queue)}] {account.label}")
-                    try:
-                        flow.process(account)
-                        _append_result(results_path, account, "ok", "")
-                        ok += 1
-                        print("    -> ok")
-                    except VerificationTimeout as e:
-                        _append_result(results_path, account, "no_code", str(e))
-                        fail += 1
-                        print(f"    -> no verification email: {e}")
-                    except FlowError as e:
-                        _append_result(results_path, account, "flow_error", str(e))
-                        fail += 1
-                        print(f"    -> flow error: {e}")
-                    except Exception as e:  # keep going on unexpected errors
-                        _append_result(
-                            results_path, account, "error", f"{type(e).__name__}: {e}"
-                        )
-                        fail += 1
-                        print(f"    -> unexpected error: {e}")
+            flow = SamsFlow(cfg, pw, imap, proxy_pool)
+            for i, account in enumerate(queue):
+                print(f"[{i + 1}/{len(queue)}] {account.label}")
+                try:
+                    flow.process(account)
+                    _append_result(results_path, account, "ok", "")
+                    ok += 1
+                    print("    -> ok")
+                except VerificationTimeout as e:
+                    _append_result(results_path, account, "no_code", str(e))
+                    fail += 1
+                    print(f"    -> no verification email: {e}")
+                except FlowError as e:
+                    _append_result(results_path, account, "flow_error", str(e))
+                    fail += 1
+                    print(f"    -> flow error: {e}")
+                except Exception as e:  # keep going on unexpected errors
+                    _append_result(
+                        results_path, account, "error", f"{type(e).__name__}: {e}"
+                    )
+                    fail += 1
+                    print(f"    -> unexpected error: {e}")
 
-                    if i < len(queue) - 1:
-                        self_pace(cfg)
-            finally:
-                browser.close()
+                if i < len(queue) - 1:
+                    self_pace(cfg)
     finally:
         imap.close()
 

@@ -63,6 +63,31 @@ python -m sams_automation test-imap
 python -m sams_automation test-imap --to jane.doe@yourdomain.com
 ```
 
+## Proxies (avoid hitting the site from one IP)
+
+So you're not registering every membership from the same IP, each account can
+route through its own proxy.
+
+1. `cp proxies.example.txt proxies.txt` and paste your proxies (one per line —
+   `host:port`, `host:port:user:pass`, or a full `scheme://user:pass@host:port`
+   URL all work). `proxies.txt` is git-ignored.
+2. In `config.yaml` under `proxies:`, keep `enabled: true`.
+3. Confirm they actually work and see each exit IP:
+
+   ```bash
+   python -m sams_automation test-proxy
+   ```
+
+**Rotation** (`proxies.rotation` in config):
+
+- `sticky` *(default, recommended)* — a given primary account always exits
+  through the same proxy. A stable IP per account looks natural; an account
+  that hops between IPs every run looks suspicious.
+- `round_robin` — cycle through the list across accounts.
+- `random` — pick one at random per account.
+
+To run without proxies, set `proxies.enabled: false`.
+
 ## Run it
 
 ```bash

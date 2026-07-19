@@ -19,11 +19,13 @@ from playwright.sync_api import (
     Browser,
     BrowserContext,
     Page,
+    Playwright,
     TimeoutError as PWTimeout,
 )
 
 from .config import Account, Config
 from .imap_client import ImapClient, VerificationResult
+from .proxies import ProxyPool
 
 
 class FlowError(Exception):
@@ -31,10 +33,17 @@ class FlowError(Exception):
 
 
 class SamsFlow:
-    def __init__(self, cfg: Config, browser: Browser, imap: ImapClient):
+    def __init__(
+        self,
+        cfg: Config,
+        playwright: Playwright,
+        imap: ImapClient,
+        proxy_pool: ProxyPool | None = None,
+    ):
         self.cfg = cfg
-        self.browser = browser
+        self.pw = playwright
         self.imap = imap
+        self.proxy_pool = proxy_pool
         self.sel = cfg.sams.selectors
         Path(cfg.browser.screenshot_dir).mkdir(parents=True, exist_ok=True)
         Path(cfg.browser.state_dir).mkdir(parents=True, exist_ok=True)
@@ -42,21 +51,42 @@ class SamsFlow:
     # -- public entrypoint ----------------------------------------------------
 
     def process(self, account: Account) -> None:
-        """Run the full flow for one account. Raises FlowError on failure."""
-        context = self._new_context(account)
-        page = context.new_page()
-        page.set_default_timeout(self.cfg.browser.timeout_ms)
+        """Run the full flow for one account. Raises FlowError on failure.
+
+        A fresh browser is launched per account so each one can exit through its
+        own proxy IP (the reliable way to do per-account proxies in Chromium).
+        """
+        launch_kwargs: dict = {
+            "headless": self.cfg.browser.headless,
+            "slow_mo": self.cfg.browser.slow_mo_ms,
+        }
+        proxy = (
+            self.proxy_pool.for_account(account.primary_email)
+            if self.proxy_pool
+            else None
+        )
+        if proxy:
+            launch_kwargs["proxy"] = proxy.to_playwright()
+            print(f"    via proxy {proxy.label}")
+
+        browser = self.pw.chromium.launch(**launch_kwargs)
         try:
-            self._login(page, account)
-            self._open_add_member(page, account)
-            trigger_time = datetime.now(timezone.utc)
-            self._fill_member_form(page, account)
-            self._handle_verification(page, account, trigger_time)
-            self._confirm_success(page, account)
-            if self.cfg.browser.persist_sessions:
-                context.storage_state(path=self._state_path(account))
+            context = self._new_context(browser, account)
+            page = context.new_page()
+            page.set_default_timeout(self.cfg.browser.timeout_ms)
+            try:
+                self._login(page, account)
+                self._open_add_member(page, account)
+                trigger_time = datetime.now(timezone.utc)
+                self._fill_member_form(page, account)
+                self._handle_verification(page, account, trigger_time)
+                self._confirm_success(page, account)
+                if self.cfg.browser.persist_sessions:
+                    context.storage_state(path=self._state_path(account))
+            finally:
+                context.close()
         finally:
-            context.close()
+            browser.close()
 
     # -- context / session ----------------------------------------------------
 
@@ -64,11 +94,11 @@ class SamsFlow:
         safe = account.primary_email.replace("@", "_at_").replace("/", "_")
         return str(Path(self.cfg.browser.state_dir) / f"{safe}.json")
 
-    def _new_context(self, account: Account) -> BrowserContext:
+    def _new_context(self, browser: Browser, account: Account) -> BrowserContext:
         state = self._state_path(account)
         if self.cfg.browser.persist_sessions and Path(state).exists():
-            return self.browser.new_context(storage_state=state)
-        return self.browser.new_context()
+            return browser.new_context(storage_state=state)
+        return browser.new_context()
 
     # -- steps ----------------------------------------------------------------
 

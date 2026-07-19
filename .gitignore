@@ -1,6 +1,7 @@
 # Real secrets & data — never commit these
 config.yaml
 accounts.csv
+proxies.txt
 results.csv
 state/
 screenshots/

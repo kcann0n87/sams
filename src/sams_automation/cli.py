@@ -6,6 +6,7 @@ Usage:
                                   [--headless]
     python -m sams_automation test-imap --to someone@yourdomain.com
                                   [--config config.yaml]
+    python -m sams_automation test-proxy [--config config.yaml]
     python -m sams_automation check [--config config.yaml] [--accounts accounts.csv]
 """
 
@@ -35,6 +36,37 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_test_proxy(args: argparse.Namespace) -> int:
+    """Launch a browser through each proxy and print its exit IP."""
+    from playwright.sync_api import sync_playwright
+
+    from .proxies import load_proxies
+
+    cfg = load_config(args.config)
+    proxies = load_proxies(cfg.proxies.file)
+    if not proxies:
+        print(f"No proxies found in {cfg.proxies.file}.")
+        return 1
+
+    url = "https://api.ipify.org?format=text"
+    print(f"Testing {len(proxies)} prox(ies) against {url} ...\n")
+    failures = 0
+    with sync_playwright() as pw:
+        for p in proxies:
+            try:
+                browser = pw.chromium.launch(headless=True, proxy=p.to_playwright())
+                page = browser.new_context().new_page()
+                page.goto(url, timeout=20000)
+                ip = page.inner_text("body").strip()
+                print(f"  OK   {p.label:32} -> exit IP {ip}")
+                browser.close()
+            except Exception as e:
+                failures += 1
+                print(f"  FAIL {p.label:32} -> {type(e).__name__}: {e}")
+    print(f"\n{len(proxies) - failures}/{len(proxies)} proxies working.")
+    return 1 if failures else 0
+
+
 def _cmd_check(args: argparse.Namespace) -> int:
     """Validate config + accounts and print a summary without touching anything."""
     cfg = load_config(args.config)
@@ -44,6 +76,10 @@ def _cmd_check(args: argparse.Namespace) -> int:
     print(f"  IMAP user:        {cfg.imap.username}")
     print(f"  Verification:     mode={cfg.verification.mode}")
     print(f"  Browser headless: {cfg.browser.headless}")
+    print(
+        f"  Proxies:          enabled={cfg.proxies.enabled} "
+        f"file={cfg.proxies.file} rotation={cfg.proxies.rotation}"
+    )
     print(f"Accounts OK: {args.accounts}")
     print(f"  {len(accounts)} account(s) loaded:")
     for a in accounts:
@@ -113,6 +149,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     c = sub.add_parser("check", parents=[common], help="Validate config + accounts.")
     c.set_defaults(func=_cmd_check)
+
+    tp = sub.add_parser(
+        "test-proxy",
+        parents=[common],
+        help="Launch a browser through each proxy and print its exit IP.",
+    )
+    tp.set_defaults(func=_cmd_test_proxy)
 
     t = sub.add_parser(
         "test-imap",
