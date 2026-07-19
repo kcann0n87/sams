@@ -111,7 +111,31 @@ class SamsFlow:
         trigger_time = datetime.now(timezone.utc)
         self._fill_member_form(page, account)
         self._handle_verification(page, account, trigger_time)
+        self._create_account(page, account)
         self._confirm_success(page, account)
+
+    def _create_account(self, page: Page, account: Account) -> None:
+        """Flow 'B': after the code, set the new account's password.
+
+        Skipped unless the create_password selector is configured (so it's a
+        no-op until we've confirmed the real signup page on the first run).
+        """
+        if not self.sel.get("create_password"):
+            return
+        if not account.secondary_password:
+            raise FlowError(
+                f"{account.secondary_email}: signup step needs a "
+                "secondary_password but the account row has none."
+            )
+        self._maybe_captcha(page, account)
+        self._fill(page, "create_password", account.secondary_password)
+        self._fill(
+            page, "create_password_confirm", account.secondary_password,
+            required=False,
+        )
+        self._shot(page, account, "create-account-filled")
+        self._click(page, "create_submit")
+        self._maybe_captcha(page, account)
 
     # -- context / session ----------------------------------------------------
 

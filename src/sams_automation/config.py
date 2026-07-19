@@ -86,6 +86,8 @@ class Account:
     secondary_last: str
     secondary_email: str
     phone: str = ""
+    # Password for the NEW account created after the invite code (flow "B").
+    secondary_password: str = ""
     # The complimentary-membership form has no address fields; these are kept
     # optional in case another flow needs them.
     address1: str = ""
@@ -228,6 +230,7 @@ def load_accounts(path: str | Path) -> list[Account]:
                     secondary_last=row["secondary_last"],
                     secondary_email=row["secondary_email"],
                     phone=row.get("phone", ""),
+                    secondary_password=row.get("secondary_password", ""),
                     address1=row.get("address1", ""),
                     address2=row.get("address2", ""),
                     city=row.get("city", ""),

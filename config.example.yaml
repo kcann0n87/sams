@@ -129,6 +129,14 @@ sams:
     code_input: "input[autocomplete='one-time-code']"
     code_submit: "button[type='submit']"
 
+    # --- New-account signup after the code (flow "B", TODO: confirm on first run)
+    # Where the new membership sets its OWN password. Left empty = this step is
+    # skipped; fill these in once the first run reveals the signup page, and the
+    # new account's password comes from the 'secondary_password' CSV column.
+    create_password: ""
+    create_password_confirm: ""
+    create_submit: ""
+
     # Element shown once the member is confirmed. Empty = don't hard-fail (TODO).
     success_marker: ""
 
