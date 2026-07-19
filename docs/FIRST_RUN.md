@@ -1,15 +1,38 @@
 # First run — proving the flow
 
-Goal: get **one** real account to go start-to-finish, and capture what I need to
-wire the automation to the real Sam's Club page. Do this on your own machine.
+Goal: get **one** real account to go start-to-finish with the automation typing
+the login and the member details for you, pausing only if a "press and hold"
+CAPTCHA appears. Do this on your own machine.
+
+## Why this setup
+
+Sam's Club's "press and hold" is bot detection (PerimeterX). It hard-blocks
+stripped-down automation browsers even if a human does the hold. The way around
+it is to **be a real browser**: the automation drives your installed Google
+Chrome, using a persistent profile that you warm up by passing one challenge by
+hand, from your normal home IP. After that the profile is usually trusted.
+
+That's already the default in `config.example.yaml`:
+
+```yaml
+browser:
+  channel: "chrome"
+  user_data_dir: "chrome-profile"
+  stealth: true
+```
 
 ## 1. Install
 
 ```bash
-cd sams
+cd ~/sams
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-playwright install chromium
+python -m playwright install chromium   # bundled browser (fallback); real Chrome is used via channel
 ```
+
+You also need Google Chrome installed normally (you already have it).
 
 ## 2. Fill in one account
 
@@ -18,82 +41,67 @@ cp config.example.yaml config.yaml
 cp accounts.example.csv accounts.csv
 ```
 
-- **`config.yaml`** → put your iCloud details in the `imap:` block. The password
-  must be an **app-specific password** from
-  [appleid.apple.com](https://appleid.apple.com) (Sign-In and Security →
-  App-Specific Passwords). If you're not using proxies yet, set
-  `proxies.enabled: false` for this first test.
-- **`accounts.csv`** → delete the two example rows and put in **one** real row:
-  a primary login plus the secondary member's name, email (on your catch-all
-  domain), and address.
+- **`config.yaml`** → fill the `imap:` block with your iCloud email + an
+  **app-specific password** from [appleid.apple.com](https://appleid.apple.com).
+- **`accounts.csv`** → replace the examples with **one** real row.
 
-Sanity-check it loads:
+Check it and confirm iCloud connects:
 
 ```bash
 python -m sams_automation check
-python -m sams_automation test-imap        # confirms iCloud IMAP connects
+python -m sams_automation test-imap
 ```
 
-## 3. Record the real flow (this is the important part)
+## 3. Get the real selectors (CAPTCHA-free)
 
-This opens a browser with a recorder. Everything you click is turned into a
-script with the exact selectors — which is precisely what I need.
+The automation needs to know which field is which on the real page. Easiest way
+that doesn't trip any bot check:
 
-```bash
-playwright codegen --target python -o recorded_flow.py https://www.samsclub.com
-```
+1. In your **normal Chrome**, log into one account and go to the page where you
+   add the complimentary / secondary member.
+2. Right-click the page → **Save As** → "Web Page, HTML Only" → save it.
+3. Send me that `.html` file (it's just the page markup — no passwords).
 
-In the window that opens, do the whole thing **by hand, slowly**:
+I'll read the field names out of it and fill in every selector and the URLs in
+`config.yaml`. Also tell me the exact URL of that add-member page.
 
-1. Log into one of your primary accounts.
-2. Navigate to wherever you add the complimentary / secondary member.
-3. Fill in that member's name, email, and address.
-4. Submit — up to the point where it says it sent a verification email.
+## 4. Get one real verification email
 
-Then close the window. You'll have a file `recorded_flow.py`.
-
-**Send me `recorded_flow.py`.** It contains selectors and URLs, but **no
-passwords** (you can open it and check — the recorder captures what you clicked,
-not your saved credentials). If you typed your password into a field during
-recording and it shows up, just delete that one line before sending.
-
-## 4. Grab one real verification email
-
-After step 3 triggered a verification email, either:
+Trigger one member invite by hand (or we'll trigger it in step 5), then:
 
 ```bash
 python -m sams_automation test-imap --to the.secondary@yourdomain.com
 ```
 
-and paste me what it prints, **or** forward me the email itself. I need to see
-whether Sam's Club sends a **numeric code** or an **activation link**, and the
-exact format, so I can set `verification.mode` and the regex correctly.
+Paste me what it prints (or forward the email). I need to see whether Sam's Club
+sends a **numeric code** or an **activation link**, so I set the mode + regex.
 
-## 5. What I do with it
-
-From `recorded_flow.py` + the sample email I'll:
-
-- fill in every real selector and URL in `config.yaml`,
-- set the verification mode (code vs link) and regex,
-- flag anything that needs a decision (e.g. a CAPTCHA step, an unexpected
-  confirmation dialog).
-
-Then you run:
+## 5. First automated run — warm the profile
 
 ```bash
 python -m sams_automation run --limit 1
 ```
 
-and we iterate on any step that trips, using the screenshots it drops in
-`screenshots/`, until one account goes fully green. After that, the rest of the
-list is just `python -m sams_automation run`, and we can talk about wrapping it
-in a local dashboard.
+Real Chrome opens with the `chrome-profile` folder. If a press-and-hold appears,
+**solve it by hand** — the script waits for you, then continues. Once you've
+passed it, that profile is warmed, so later accounts should see it rarely or not
+at all. The script fills the login, fills the member form, grabs the code from
+your inbox, and enters it. It screenshots each step into `screenshots/`.
 
----
+We iterate on anything that trips using those screenshots until one account goes
+fully green. After that:
 
-### If you'd rather not use the recorder
+```bash
+python -m sams_automation run          # the rest of the list
+```
 
-Just run `python -m sams_automation run --limit 1` with `headless: false`. It
-screenshots every step into `screenshots/` and, wherever it can't find a field,
-the error names the selector key (e.g. `add_email`). Send me the screenshots and
-those errors and we'll fill selectors in that way instead — it's just slower.
+and it skips any account already marked `ok` in `results.csv`, so you can stop
+and resume anytime.
+
+## Reality check
+
+This is the best legitimate shot at hands-off runs, but it's not guaranteed —
+PerimeterX can still challenge, and if it ever hard-blocks even your warmed real
+Chrome, the fallback is the fully manual path plus `python -m sams_automation
+watch`, which live-prints each code as it lands so you at least never dig
+through email.

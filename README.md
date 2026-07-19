@@ -5,11 +5,18 @@ membership you own, driving the browser and pulling the verification code out of
 your iCloud catch-all mailbox automatically so you don't have to do it by hand
 for every account.
 
-> **Run this on your own machine, in a visible browser.** Sam's Club uses
-> CAPTCHAs and bot detection. The script pauses and lets you solve a CAPTCHA
-> when one appears (headful mode), then continues. Running it headless will
-> stop at the first CAPTCHA. Keep your passwords local — `config.yaml` and
-> `accounts.csv` are git-ignored.
+> **Run this on your own machine, in a visible browser.** Sam's Club uses a
+> "press and hold" bot check (PerimeterX) that hard-blocks stripped-down
+> automation browsers. To get around it the tool drives your **real Google
+> Chrome** with a persistent profile you warm up by solving one challenge by
+> hand (see `browser.channel` / `browser.user_data_dir` in the config). The
+> script pauses for you on a CAPTCHA, then continues. It's the best legitimate
+> shot at hands-off runs, not a guaranteed bypass. Keep your passwords local —
+> `config.yaml` and `accounts.csv` are git-ignored.
+>
+> If it ever gets fully walled, there's a manual fallback: do the browser part
+> yourself and run `python -m sams_automation watch`, which live-prints each
+> verification code the instant it lands so you never dig through email.
 
 ## What it does
 
@@ -101,6 +108,19 @@ python -m sams_automation run
 Useful flags: `--only someone@yourdomain.com` (one specific row),
 `--no-resume` (don't skip completed rows), `--headless` (no window — only once
 the flow is proven and CAPTCHA-free).
+
+### Manual fallback: just watch for codes
+
+If you'd rather (or have to) do the browser part by hand, this tails your
+catch-all inbox and prints each Sam's Club code as it arrives, copying it to
+your clipboard so you just paste:
+
+```bash
+python -m sams_automation watch                       # all secondary emails
+python -m sams_automation watch --to jane@yourdomain.com   # just one
+```
+
+Ctrl-C to stop. `--no-copy` disables the clipboard copy.
 
 ## Getting it working the first time
 

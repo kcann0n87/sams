@@ -26,6 +26,7 @@ from playwright.sync_api import (
 from .config import Account, Config
 from .imap_client import ImapClient, VerificationResult
 from .proxies import ProxyPool
+from .stealth import STEALTH_INIT_JS
 
 
 class FlowError(Exception):
@@ -39,11 +40,15 @@ class SamsFlow:
         playwright: Playwright,
         imap: ImapClient,
         proxy_pool: ProxyPool | None = None,
+        shared_context: BrowserContext | None = None,
     ):
         self.cfg = cfg
         self.pw = playwright
         self.imap = imap
         self.proxy_pool = proxy_pool
+        # When set (real-Chrome persistent-profile mode), one warmed profile is
+        # reused across all accounts and we log out/in between them.
+        self.shared_context = shared_context
         self.sel = cfg.sams.selectors
         Path(cfg.browser.screenshot_dir).mkdir(parents=True, exist_ok=True)
         Path(cfg.browser.state_dir).mkdir(parents=True, exist_ok=True)
@@ -51,15 +56,30 @@ class SamsFlow:
     # -- public entrypoint ----------------------------------------------------
 
     def process(self, account: Account) -> None:
-        """Run the full flow for one account. Raises FlowError on failure.
+        """Run the full flow for one account. Raises FlowError on failure."""
+        if self.shared_context is not None:
+            self._process_shared(account)
+        else:
+            self._process_ephemeral(account)
 
-        A fresh browser is launched per account so each one can exit through its
-        own proxy IP (the reliable way to do per-account proxies in Chromium).
-        """
+    def _process_shared(self, account: Account) -> None:
+        """Use the one persistent (warmed) Chrome profile, switching accounts."""
+        page = self.shared_context.new_page()
+        page.set_default_timeout(self.cfg.browser.timeout_ms)
+        try:
+            self._login(page, account, shared=True)
+            self._run_member_flow(page, account)
+        finally:
+            page.close()
+
+    def _process_ephemeral(self, account: Account) -> None:
+        """Launch a throwaway browser per account (optionally via a proxy)."""
         launch_kwargs: dict = {
             "headless": self.cfg.browser.headless,
             "slow_mo": self.cfg.browser.slow_mo_ms,
         }
+        if self.cfg.browser.channel:
+            launch_kwargs["channel"] = self.cfg.browser.channel
         proxy = (
             self.proxy_pool.for_account(account.primary_email)
             if self.proxy_pool
@@ -72,21 +92,26 @@ class SamsFlow:
         browser = self.pw.chromium.launch(**launch_kwargs)
         try:
             context = self._new_context(browser, account)
+            if self.cfg.browser.stealth:
+                context.add_init_script(STEALTH_INIT_JS)
             page = context.new_page()
             page.set_default_timeout(self.cfg.browser.timeout_ms)
             try:
-                self._login(page, account)
-                self._open_add_member(page, account)
-                trigger_time = datetime.now(timezone.utc)
-                self._fill_member_form(page, account)
-                self._handle_verification(page, account, trigger_time)
-                self._confirm_success(page, account)
+                self._login(page, account, shared=False)
+                self._run_member_flow(page, account)
                 if self.cfg.browser.persist_sessions:
                     context.storage_state(path=self._state_path(account))
             finally:
                 context.close()
         finally:
             browser.close()
+
+    def _run_member_flow(self, page: Page, account: Account) -> None:
+        self._open_add_member(page, account)
+        trigger_time = datetime.now(timezone.utc)
+        self._fill_member_form(page, account)
+        self._handle_verification(page, account, trigger_time)
+        self._confirm_success(page, account)
 
     # -- context / session ----------------------------------------------------
 
@@ -102,13 +127,19 @@ class SamsFlow:
 
     # -- steps ----------------------------------------------------------------
 
-    def _login(self, page: Page, account: Account) -> None:
+    def _login(self, page: Page, account: Account, shared: bool) -> None:
+        marker = self.sel.get("logged_in_marker")
+
+        if shared:
+            # One shared profile serves every account, so make sure we're not
+            # still signed in as the previous member before logging in.
+            if self.cfg.sams.logout_url:
+                page.goto(self.cfg.sams.logout_url, wait_until="domcontentloaded")
         page.goto(self.cfg.sams.login_url, wait_until="domcontentloaded")
         self._maybe_captcha(page, account)
 
-        # If a saved session already logged us in, skip typing credentials.
-        marker = self.sel.get("logged_in_marker")
-        if marker and self._is_visible(page, marker, timeout_ms=4000):
+        # In ephemeral mode a saved session may already have us logged in.
+        if not shared and marker and self._is_visible(page, marker, timeout_ms=4000):
             self._shot(page, account, "already-logged-in")
             return
 

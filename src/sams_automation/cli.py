@@ -36,6 +36,65 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _copy_to_clipboard(text: str) -> bool:
+    """Best-effort clipboard copy. Returns True on success."""
+    import shutil
+    import subprocess
+
+    for tool in (["pbcopy"], ["xclip", "-selection", "clipboard"], ["wl-copy"]):
+        if shutil.which(tool[0]):
+            try:
+                subprocess.run(tool, input=text.encode(), check=True)
+                return True
+            except Exception:
+                return False
+    return False
+
+
+def _cmd_watch(args: argparse.Namespace) -> int:
+    """Live-print Sam's Club verification codes as they hit the catch-all inbox."""
+    import time
+    from datetime import datetime, timedelta, timezone
+
+    cfg = load_config(args.config)
+    client = ImapClient(cfg.imap)
+    print(f"Connecting to {cfg.imap.host} as {cfg.imap.username} ...")
+    client.connect()
+
+    start = datetime.now(timezone.utc) - timedelta(minutes=args.backfill)
+    seen: set[str] = set()
+    scope = f" for {args.to}" if args.to else ""
+    print(
+        f"Watching for Sam's Club codes{scope} "
+        f"(last {args.backfill} min + new). Press Ctrl-C to stop.\n"
+    )
+    try:
+        while True:
+            hits = client.scan_recent(
+                since=start,
+                verification=cfg.verification,
+                to_filter=args.to,
+                skip_uids=seen,
+            )
+            for h in hits:
+                value = h.code or h.link or "(nothing matched — check the regex)"
+                local = h.received.astimezone().strftime("%H:%M:%S")
+                # \a rings the terminal bell so you notice without watching.
+                print(f"\a{'=' * 52}")
+                print(f"  {local}   ->  {h.to_address}")
+                print(f"  CODE:  {value}")
+                print(f"  ({h.subject})")
+                if args.copy and h.code and _copy_to_clipboard(h.code):
+                    print("  (copied to clipboard — just paste)")
+                print(f"{'=' * 52}\n")
+            time.sleep(cfg.imap.poll_interval_seconds)
+    except KeyboardInterrupt:
+        print("\nStopped.")
+    finally:
+        client.close()
+    return 0
+
+
 def _cmd_test_proxy(args: argparse.Namespace) -> int:
     """Launch a browser through each proxy and print its exit IP."""
     from playwright.sync_api import sync_playwright
@@ -156,6 +215,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Launch a browser through each proxy and print its exit IP.",
     )
     tp.set_defaults(func=_cmd_test_proxy)
+
+    w = sub.add_parser(
+        "watch",
+        parents=[common],
+        help="Live-print verification codes as they arrive in the catch-all inbox.",
+    )
+    w.add_argument("--to", default=None, help="Only show codes for this secondary email.")
+    w.add_argument(
+        "--backfill",
+        type=int,
+        default=10,
+        help="Also show codes from the last N minutes on startup (default 10).",
+    )
+    w.add_argument(
+        "--no-copy",
+        dest="copy",
+        action="store_false",
+        help="Don't auto-copy the code to the clipboard.",
+    )
+    w.set_defaults(func=_cmd_watch, copy=True)
 
     t = sub.add_parser(
         "test-imap",

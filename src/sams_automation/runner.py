@@ -14,6 +14,7 @@ from .config import Account, Config
 from .imap_client import ImapClient, VerificationTimeout
 from .proxies import ProxyPool, load_proxies
 from .sams_flow import FlowError, SamsFlow
+from .stealth import STEALTH_INIT_JS
 
 RESULTS_FILE = "results.csv"
 RESULTS_HEADER = ["timestamp", "primary_email", "secondary_email", "status", "detail"]
@@ -78,8 +79,10 @@ def run(
 
     print(f"Processing {len(queue)} account(s).\n")
 
+    shared_mode = bool(cfg.browser.user_data_dir)
+
     proxy_pool: ProxyPool | None = None
-    if cfg.proxies.enabled:
+    if cfg.proxies.enabled and not shared_mode:
         proxies = load_proxies(cfg.proxies.file)  # raises if the file is missing
         if not proxies:
             raise ValueError(
@@ -87,8 +90,11 @@ def run(
                 f"{cfg.proxies.file}."
             )
         proxy_pool = ProxyPool(proxies, cfg.proxies.rotation)
+        print(f"Using {len(proxies)} prox(ies), rotation={cfg.proxies.rotation}.\n")
+    elif cfg.proxies.enabled and shared_mode:
         print(
-            f"Using {len(proxies)} prox(ies), rotation={cfg.proxies.rotation}.\n"
+            "Note: proxies are ignored while using a persistent Chrome profile "
+            "(you want your trusted home IP here).\n"
         )
 
     imap = ImapClient(cfg.imap)
@@ -96,31 +102,55 @@ def run(
     ok = fail = 0
     try:
         with sync_playwright() as pw:
-            flow = SamsFlow(cfg, pw, imap, proxy_pool)
-            for i, account in enumerate(queue):
-                print(f"[{i + 1}/{len(queue)}] {account.label}")
-                try:
-                    flow.process(account)
-                    _append_result(results_path, account, "ok", "")
-                    ok += 1
-                    print("    -> ok")
-                except VerificationTimeout as e:
-                    _append_result(results_path, account, "no_code", str(e))
-                    fail += 1
-                    print(f"    -> no verification email: {e}")
-                except FlowError as e:
-                    _append_result(results_path, account, "flow_error", str(e))
-                    fail += 1
-                    print(f"    -> flow error: {e}")
-                except Exception as e:  # keep going on unexpected errors
-                    _append_result(
-                        results_path, account, "error", f"{type(e).__name__}: {e}"
-                    )
-                    fail += 1
-                    print(f"    -> unexpected error: {e}")
+            shared_context = None
+            if shared_mode:
+                channel = cfg.browser.channel or None
+                print(
+                    f"Launching real Chrome (channel={channel or 'chromium'}) with "
+                    f"profile '{cfg.browser.user_data_dir}'. Solve any press-and-hold "
+                    "by hand; the profile stays warm for later accounts.\n"
+                )
+                shared_context = pw.chromium.launch_persistent_context(
+                    cfg.browser.user_data_dir,
+                    headless=cfg.browser.headless,
+                    slow_mo=cfg.browser.slow_mo_ms,
+                    channel=channel,
+                )
+                shared_context.set_default_timeout(cfg.browser.timeout_ms)
+                if cfg.browser.stealth:
+                    shared_context.add_init_script(STEALTH_INIT_JS)
 
-                if i < len(queue) - 1:
-                    self_pace(cfg)
+            flow = SamsFlow(
+                cfg, pw, imap, proxy_pool, shared_context=shared_context
+            )
+            try:
+                for i, account in enumerate(queue):
+                    print(f"[{i + 1}/{len(queue)}] {account.label}")
+                    try:
+                        flow.process(account)
+                        _append_result(results_path, account, "ok", "")
+                        ok += 1
+                        print("    -> ok")
+                    except VerificationTimeout as e:
+                        _append_result(results_path, account, "no_code", str(e))
+                        fail += 1
+                        print(f"    -> no verification email: {e}")
+                    except FlowError as e:
+                        _append_result(results_path, account, "flow_error", str(e))
+                        fail += 1
+                        print(f"    -> flow error: {e}")
+                    except Exception as e:  # keep going on unexpected errors
+                        _append_result(
+                            results_path, account, "error", f"{type(e).__name__}: {e}"
+                        )
+                        fail += 1
+                        print(f"    -> unexpected error: {e}")
+
+                    if i < len(queue) - 1:
+                        self_pace(cfg)
+            finally:
+                if shared_context is not None:
+                    shared_context.close()
     finally:
         imap.close()
 

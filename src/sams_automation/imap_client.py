@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.message import Message
-from email.utils import parsedate_to_datetime
+from email.utils import getaddresses, parsedate_to_datetime
 
 from .config import ImapConfig, VerificationConfig
 
@@ -27,6 +27,18 @@ class VerificationTimeout(Exception):
 
 @dataclass
 class VerificationResult:
+    code: str | None
+    link: str | None
+    subject: str
+    received: datetime
+
+
+@dataclass
+class WatchHit:
+    """One verification email seen by the live watcher."""
+
+    uid: str
+    to_address: str  # which secondary email it was sent to
     code: str | None
     link: str | None
     subject: str
@@ -159,6 +171,71 @@ class ImapClient:
                 continue
             yield uid, msg
 
+    def scan_recent(
+        self,
+        *,
+        since: datetime,
+        verification: VerificationConfig,
+        to_filter: str | None = None,
+        skip_uids: set[str] | None = None,
+    ) -> list[WatchHit]:
+        """Return Sam's Club verification emails received at/after `since`.
+
+        Used by the live watcher. `skip_uids` is mutated: every message this
+        examines is added to it so subsequent calls don't re-fetch it.
+        """
+        assert self._conn is not None, "connect() before scanning"
+        skip = skip_uids if skip_uids is not None else set()
+        self._conn.select(self.cfg.mailbox)
+        code_re = re.compile(verification.code_regex)
+        link_re = re.compile(verification.link_regex)
+
+        since_str = since.strftime("%d-%b-%Y")
+        typ, data = self._conn.search(None, "SINCE", since_str)
+        hits: list[WatchHit] = []
+        if typ != "OK" or not data or not data[0]:
+            return hits
+
+        for raw_uid in data[0].split():
+            uid = raw_uid.decode() if isinstance(raw_uid, bytes) else str(raw_uid)
+            if uid in skip:
+                continue
+            typ, msg_data = self._conn.fetch(raw_uid, "(RFC822)")
+            if typ != "OK" or not msg_data or not msg_data[0]:
+                continue
+            raw = msg_data[0][1]
+            if not isinstance(raw, (bytes, bytearray)):
+                continue
+            skip.add(uid)  # mark examined so we don't re-fetch next cycle
+
+            msg = email.message_from_bytes(raw)
+            if self.cfg.from_contains and not _from_matches(msg, self.cfg.from_contains):
+                continue
+            received = _received_time(msg)
+            if received < since:
+                continue
+            if to_filter and not _to_matches(msg, to_filter):
+                continue
+
+            body = _message_text(msg)
+            m = code_re.search(body) or code_re.search(msg.get("Subject", ""))
+            code = m.group(1) if m else None
+            m2 = link_re.search(body)
+            link = m2.group(1) if m2 else None
+
+            hits.append(
+                WatchHit(
+                    uid=uid,
+                    to_address=_primary_recipient(msg),
+                    code=code,
+                    link=link,
+                    subject=msg.get("Subject", ""),
+                    received=received,
+                )
+            )
+        hits.sort(key=lambda h: h.received)
+        return hits
+
     def test_connection(self) -> list[str]:
         """Connect, select the mailbox, return available folder names."""
         self.connect()
@@ -180,6 +257,19 @@ class ImapClient:
 
 def _addresses(msg: Message, header: str) -> str:
     return " ".join(str(v) for v in msg.get_all(header, [])).lower()
+
+
+def _primary_recipient(msg: Message) -> str:
+    """Best guess at the real recipient (the secondary email) for a catch-all.
+
+    Delivered-To / X-Original-To carry the true envelope recipient more
+    reliably than the To header, so prefer those.
+    """
+    headers: list[str] = []
+    for h in ("Delivered-To", "X-Original-To", "Envelope-To", "To"):
+        headers += [str(v) for v in msg.get_all(h, [])]
+    addrs = [addr for _, addr in getaddresses(headers) if addr]
+    return addrs[0] if addrs else ""
 
 
 def _to_matches(msg: Message, to_address: str) -> bool:

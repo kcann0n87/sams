@@ -38,6 +38,9 @@ class BrowserConfig:
     persist_sessions: bool
     state_dir: str
     screenshot_dir: str
+    channel: str | None  # e.g. "chrome" to drive real Google Chrome
+    user_data_dir: str | None  # persistent profile dir shared across accounts
+    stealth: bool  # apply anti-detection init scripts
 
 
 @dataclass
@@ -50,6 +53,7 @@ class PacingConfig:
 class SamsConfig:
     login_url: str
     add_member_url: str
+    logout_url: str
     selectors: dict[str, str]
     captcha_marker: str
     captcha_wait_seconds: int
@@ -155,6 +159,9 @@ def load_config(path: str | Path) -> Config:
             persist_sessions=bool(browser.get("persist_sessions", True)),
             state_dir=browser.get("state_dir", "state"),
             screenshot_dir=browser.get("screenshot_dir", "screenshots"),
+            channel=browser.get("channel") or None,
+            user_data_dir=browser.get("user_data_dir") or None,
+            stealth=bool(browser.get("stealth", True)),
         ),
         pacing=PacingConfig(
             between_accounts_min=float(pacing.get("between_accounts_min", 20)),
@@ -163,6 +170,7 @@ def load_config(path: str | Path) -> Config:
         sams=SamsConfig(
             login_url=sams["login_url"],
             add_member_url=sams["add_member_url"],
+            logout_url=sams.get("logout_url", ""),
             selectors=sams.get("selectors", {}),
             captcha_marker=sams.get("captcha_marker", ""),
             captcha_wait_seconds=int(sams.get("captcha_wait_seconds", 300)),

@@ -3,8 +3,10 @@ config.yaml
 accounts.csv
 proxies.txt
 results.csv
+recorded_flow.py
 state/
 screenshots/
+chrome-profile/
 *.log
 
 # Python

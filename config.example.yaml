@@ -49,10 +49,21 @@ browser:
   headless: false          # Keep visible so you can solve CAPTCHAs.
   slow_mo_ms: 150          # Small delay between actions to look less robotic.
   timeout_ms: 30000        # Default per-action timeout.
-  # Reuse a saved login session per primary account to cut down on CAPTCHAs.
   persist_sessions: true
   state_dir: "state"       # Where per-account storage_state json files live.
   screenshot_dir: "screenshots"
+
+  # --- Looking like a real browser (recommended for Sam's Club) ---
+  # Sam's Club's "press and hold" bot check hard-blocks stripped-down automation
+  # browsers. Driving REAL Google Chrome with a persistent profile that has
+  # already passed a challenge ("warmed") from your normal home IP is the best
+  # way to avoid it. Solve one press-and-hold by hand and the profile is usually
+  # trusted afterward.
+  channel: "chrome"             # use installed Google Chrome (not bundled Chromium)
+  user_data_dir: "chrome-profile"  # one persistent profile reused across accounts
+  stealth: true                 # apply anti-automation-detection patches
+  # NOTE: when user_data_dir is set, proxies below are ignored — you WANT your
+  # trusted home IP here, not a fresh proxy IP that gets challenged.
 
 pacing:
   # Random wait (seconds) between finishing one account and starting the next,
@@ -81,6 +92,7 @@ proxies:
 sams:
   login_url: "https://www.samsclub.com/login"
   add_member_url: "https://www.samsclub.com/account/membership/add-member"
+  logout_url: "https://www.samsclub.com/logout"   # used to switch accounts in a shared profile
 
   selectors:
     # --- Login page ---
