@@ -23,9 +23,12 @@ imap:
 
   # Only accept emails from these senders (substring match, case-insensitive).
   # Prevents grabbing a code from an unrelated message.
+  # NOTE: iCloud Hide My Email rewrites the sender to an @icloud.com relay like
+  #   No-reply_at_transaction_samsclub_com_...@icloud.com
+  # so match on the bare token "samsclub" (present in both that relay form and a
+  # normal samsclub.com address), NOT "samsclub.com".
   from_contains:
-    - "samsclub.com"
-    - "sams club"
+    - "samsclub"
 
   # How long to wait for the verification email to arrive, and how often to poll.
   timeout_seconds: 180

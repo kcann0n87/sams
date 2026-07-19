@@ -18,7 +18,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from sams_automation.imap_client import (  # noqa: E402
     _from_matches,
+    _hme_alias,
     _message_text,
+    _primary_recipient,
     _received_time,
     _to_matches,
 )
@@ -84,6 +86,49 @@ def test_html_body_code():
     m = email.message_from_string(raw)
     text = _message_text(m)
     assert CODE_RE.search(text).group(1) == "654321"
+
+
+# Real headers from an actual Sam's Club code email delivered via iCloud
+# Hide My Email (sender rewritten, addressed to a HME alias, code in subject).
+HME_RAW = (
+    "Delivered-To: kdotcannon87@gmail.com\r\n"
+    "From: Sam's Club "
+    "<No-reply_at_transaction_samsclub_com_ysntf8b7kgdz64_28g48899@icloud.com>\r\n"
+    "To: Hide My Email <59clawed-trade@icloud.com>\r\n"
+    "X-ICLOUD-HME: p=59clawed-trade@icloud.com; d=; f=kcannonpoker@icloud.com; "
+    "r=to; s=No-reply@transaction.samsclub.com\r\n"
+    "Subject: Your Sam's Club verification code is 255502\r\n"
+    "Date: Sun, 19 Jul 2026 13:15:05 +0000\r\n"
+    "Content-Type: text/plain; charset=utf-8\r\n"
+    "\r\n"
+    "Your code: 255502. It expires in 15 minutes.\r\n"
+)
+
+
+def test_hme_sender_matches_samsclub_token():
+    m = email.message_from_string(HME_RAW)
+    # The literal "samsclub.com" would NOT match the rewritten sender...
+    assert not _from_matches(m, ["samsclub.com"])
+    # ...but the bare token does (this is why the config default is "samsclub").
+    assert _from_matches(m, ["samsclub"])
+
+
+def test_hme_alias_extracted():
+    m = email.message_from_string(HME_RAW)
+    assert _hme_alias(m) == "59clawed-trade@icloud.com"
+    assert _primary_recipient(m) == "59clawed-trade@icloud.com"
+
+
+def test_hme_to_matches_alias():
+    m = email.message_from_string(HME_RAW)
+    assert _to_matches(m, "59clawed-trade@icloud.com")
+    assert not _to_matches(m, "someone-else@icloud.com")
+
+
+def test_hme_code_from_subject_and_body():
+    m = email.message_from_string(HME_RAW)
+    assert CODE_RE.search(m.get("Subject", "")).group(1) == "255502"
+    assert CODE_RE.search(_message_text(m)).group(1) == "255502"
 
 
 def _run_all():

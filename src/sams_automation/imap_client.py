@@ -259,14 +259,29 @@ def _addresses(msg: Message, header: str) -> str:
     return " ".join(str(v) for v in msg.get_all(header, [])).lower()
 
 
+def _hme_alias(msg: Message) -> str:
+    """The iCloud Hide My Email alias this message was addressed to, if any.
+
+    Hide My Email adds a header like:
+        X-ICLOUD-HME: p=59clawed-trade@icloud.com; d=; f=you@icloud.com; ...
+    where `p=` is the alias the sender actually used (the "secondary email"),
+    which is the most reliable recipient for our purposes.
+    """
+    hme = msg.get("X-ICLOUD-HME", "") or ""
+    m = re.search(r"p=([^;\s]+@[^;\s]+)", hme)
+    return m.group(1) if m else ""
+
+
 def _primary_recipient(msg: Message) -> str:
     """Best guess at the real recipient (the secondary email) for a catch-all.
 
-    Delivered-To / X-Original-To carry the true envelope recipient more
-    reliably than the To header, so prefer those.
+    Prefer the Hide My Email alias, then the envelope recipient headers, then To.
     """
+    alias = _hme_alias(msg)
+    if alias:
+        return alias
     headers: list[str] = []
-    for h in ("Delivered-To", "X-Original-To", "Envelope-To", "To"):
+    for h in ("X-Original-To", "Envelope-To", "Delivered-To", "To"):
         headers += [str(v) for v in msg.get_all(h, [])]
     addrs = [addr for _, addr in getaddresses(headers) if addr]
     return addrs[0] if addrs else ""
@@ -274,7 +289,16 @@ def _primary_recipient(msg: Message) -> str:
 
 def _to_matches(msg: Message, to_address: str) -> bool:
     target = to_address.lower()
-    for header in ("To", "Delivered-To", "X-Original-To", "Cc", "Envelope-To"):
+    if target and target == _hme_alias(msg).lower():
+        return True
+    for header in (
+        "To",
+        "Delivered-To",
+        "X-Original-To",
+        "Cc",
+        "Envelope-To",
+        "X-ICLOUD-HME",
+    ):
         if target in _addresses(msg, header):
             return True
     return False
