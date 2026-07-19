@@ -85,12 +85,14 @@ class Account:
     secondary_first: str
     secondary_last: str
     secondary_email: str
-    address1: str
-    address2: str
-    city: str
-    state: str
-    zip: str
     phone: str = ""
+    # The complimentary-membership form has no address fields; these are kept
+    # optional in case another flow needs them.
+    address1: str = ""
+    address2: str = ""
+    city: str = ""
+    state: str = ""
+    zip: str = ""
     # Free-form extra columns are preserved here in case the real form needs them.
     extra: dict[str, str] = field(default_factory=dict)
 
@@ -105,10 +107,6 @@ REQUIRED_ACCOUNT_COLUMNS = [
     "secondary_first",
     "secondary_last",
     "secondary_email",
-    "address1",
-    "city",
-    "state",
-    "zip",
 ]
 
 
@@ -229,12 +227,12 @@ def load_accounts(path: str | Path) -> list[Account]:
                     secondary_first=row["secondary_first"],
                     secondary_last=row["secondary_last"],
                     secondary_email=row["secondary_email"],
-                    address1=row["address1"],
-                    address2=row.get("address2", ""),
-                    city=row["city"],
-                    state=row["state"],
-                    zip=row["zip"],
                     phone=row.get("phone", ""),
+                    address1=row.get("address1", ""),
+                    address2=row.get("address2", ""),
+                    city=row.get("city", ""),
+                    state=row.get("state", ""),
+                    zip=row.get("zip", ""),
                     extra=extra,
                 )
             )

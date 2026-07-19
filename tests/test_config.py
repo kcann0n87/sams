@@ -36,9 +36,30 @@ def test_example_accounts_load():
     accts = load_accounts(ROOT / "accounts.example.csv")
     assert len(accts) == 2
     a = accts[0]
-    assert a.primary_email and a.secondary_email
-    assert a.address1 and a.city and a.state and a.zip
+    # Complimentary-membership form needs name + email (+ optional phone), no address
+    assert a.primary_email and a.primary_password
+    assert a.secondary_first and a.secondary_last and a.secondary_email
+    assert a.phone  # example rows include a phone
     assert a.label == f"{a.primary_email} -> {a.secondary_email}"
+
+
+def test_accounts_load_without_address_columns():
+    # A CSV with only the required columns (no address at all) must load fine.
+    import io
+
+    from sams_automation import config as cfgmod
+
+    csv_text = (
+        "primary_email,primary_password,secondary_first,secondary_last,secondary_email\n"
+        "p@x.com,pw,Jane,Doe,alias@icloud.com\n"
+    )
+    tmp = ROOT / "tests" / "_tmp_accounts.csv"
+    tmp.write_text(csv_text)
+    try:
+        accts = cfgmod.load_accounts(tmp)
+        assert len(accts) == 1 and accts[0].address1 == "" and accts[0].zip == ""
+    finally:
+        tmp.unlink()
 
 
 def _run_all():

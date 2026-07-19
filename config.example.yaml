@@ -88,42 +88,52 @@ proxies:
   rotation: "sticky"
 
 # -----------------------------------------------------------------------------
-# Sam's Club page map. These are PLACEHOLDERS. After we watch one real run in a
-# visible browser, we'll replace each selector/URL with the real one. Everything
-# the browser touches is here so no Python needs editing to fix a selector.
+# Sam's Club page map.
+# The complimentary-membership form and its field names are CONFIRMED from a
+# real saved page. Items marked (TODO) render only after you click Save (the OTP
+# step) or on pages we haven't captured yet — we finalize those on the first run.
+# Everything the browser touches lives here, so fixing a selector never needs a
+# code change.
 # -----------------------------------------------------------------------------
 sams:
-  login_url: "https://www.samsclub.com/login"
-  add_member_url: "https://www.samsclub.com/account/membership/add-member"
+  login_url: "https://www.samsclub.com/login"                                  # TODO confirm on first run
+  add_member_url: "https://www.samsclub.com/account/manage-memberships/complimentary-membership"
   logout_url: "https://www.samsclub.com/logout"   # used to switch accounts in a shared profile
 
   selectors:
-    # --- Login page ---
+    # --- Login page (TODO: confirm against the real sign-in page) ---
     login_email: "input[name='email']"
     login_password: "input[name='password']"
     login_submit: "button[type='submit']"
-    # An element that only exists once login succeeded (used to confirm we're in).
-    logged_in_marker: "[data-testid='account-menu']"
+    # Element that only exists once logged in. Empty = skip the check (safe for
+    # the first watched run; we'll add the real one so login failures are caught).
+    logged_in_marker: ""
 
-    # --- Add-a-member form ---
+    # --- Complimentary-membership form (CONFIRMED from saved page) ---
     add_first_name: "input[name='firstName']"
     add_last_name: "input[name='lastName']"
     add_email: "input[name='email']"
-    add_address1: "input[name='address1']"
-    add_address2: "input[name='address2']"
-    add_city: "input[name='city']"
-    add_state: "select[name='state']"
-    add_zip: "input[name='zip']"
-    add_submit: "button[type='submit']"
+    add_phone: "input[name='phone']"
+    # This form has NO address fields; leave these empty so they're skipped.
+    add_address1: ""
+    add_address2: ""
+    add_city: ""
+    add_state: ""
+    add_zip: ""
+    # The submit button is a type=submit labeled "Save".
+    add_submit: "button[type='submit']:has-text('Save')"
 
-    # --- Verification-code entry (mode = "code") ---
-    code_input: "input[name='verificationCode']"
+    # --- OTP entry, shown in a modal after Save (TODO: confirm on first run) ---
+    # Common shape for a single OTP field; we'll correct it from the run's
+    # screenshot if Sam's uses segmented boxes instead.
+    code_input: "input[autocomplete='one-time-code']"
     code_submit: "button[type='submit']"
 
-    # An element that only appears once the secondary member is confirmed.
-    success_marker: "text=Member added"
+    # Element shown once the member is confirmed. Empty = don't hard-fail (TODO).
+    success_marker: ""
 
-  # CAPTCHA handling (headful only). When we detect this selector, the script
-  # pauses and waits for you to solve it, then resumes. Leave empty to disable.
-  captcha_marker: "iframe[src*='captcha']"
+  # CAPTCHA handling (headful only). Sam's uses PerimeterX "press and hold",
+  # whose container is typically #px-captcha. When seen, the script pauses for
+  # you to solve it, then resumes. Empty to disable. (TODO: confirm on first run)
+  captcha_marker: "#px-captcha"
   captcha_wait_seconds: 300

@@ -43,7 +43,10 @@ cp accounts.example.csv accounts.csv
 
 - **`config.yaml`** → fill the `imap:` block with your iCloud email + an
   **app-specific password** from [appleid.apple.com](https://appleid.apple.com).
-- **`accounts.csv`** → replace the examples with **one** real row.
+- **`accounts.csv`** → replace the examples with **one** real row. The
+  complimentary-membership form only needs the secondary member's **first name,
+  last name, email, and phone** — no address. The email is the iCloud Hide My
+  Email alias you generate for that member.
 
 Check it and confirm iCloud connects:
 
@@ -52,18 +55,18 @@ python -m sams_automation check
 python -m sams_automation test-imap
 ```
 
-## 3. Get the real selectors (CAPTCHA-free)
+## 3. Selectors — mostly done
 
-The automation needs to know which field is which on the real page. Easiest way
-that doesn't trip any bot check:
+The complimentary-membership form and its fields are already wired into
+`config.yaml` from the real saved page:
+`https://www.samsclub.com/account/manage-memberships/complimentary-membership`
+(firstName / lastName / email / phone → **Save**).
 
-1. In your **normal Chrome**, log into one account and go to the page where you
-   add the complimentary / secondary member.
-2. Right-click the page → **Save As** → "Web Page, HTML Only" → save it.
-3. Send me that `.html` file (it's just the page markup — no passwords).
-
-I'll read the field names out of it and fill in every selector and the URLs in
-`config.yaml`. Also tell me the exact URL of that add-member page.
+Three things render only mid-flow and get confirmed on the first watched run
+(they're marked `TODO` in the config): the **sign-in page** fields, the **OTP
+entry modal** shown after you click Save, and the **press-and-hold** container.
+The run screenshots each step, so if one of those selectors is off, the
+screenshot shows exactly what to fix.
 
 ## 4. Get one real verification email
 
