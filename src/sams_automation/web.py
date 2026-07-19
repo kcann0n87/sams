@@ -323,9 +323,23 @@ def create_app(config_path: str, accounts_path: str) -> Flask:
     return app
 
 
+def _free_port(preferred: int) -> int:
+    """Return `preferred` if free, otherwise the next open port (or any free one)."""
+    import socket
+
+    for candidate in [preferred, *range(preferred + 1, preferred + 20)]:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(("127.0.0.1", candidate)) != 0:
+                return candidate
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
 def serve(config_path: str, accounts_path: str, port: int = 8765,
           open_browser: bool = True) -> None:
     app = create_app(config_path, accounts_path)
+    port = _free_port(port)  # skip past a leftover instance instead of crashing
     url = f"http://127.0.0.1:{port}/"
     print(f"\n  Sam's Club automation is running at:  {url}")
     print("  Leave this window open. Close it (Ctrl-C) to stop.\n")
