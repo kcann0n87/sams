@@ -1,0 +1,23 @@
+# Real secrets & data — never commit these
+config.yaml
+accounts.csv
+proxies.txt
+results.csv
+recorded_flow.py
+state/
+screenshots/
+chrome-profile/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db

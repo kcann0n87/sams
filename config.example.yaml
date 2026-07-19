@@ -1,0 +1,148 @@
+# =============================================================================
+# Sam's Club secondary-membership automation — configuration
+# Copy this file to `config.yaml` and fill in your real values.
+# config.yaml is git-ignored so your credentials never get committed.
+# =============================================================================
+
+imap:
+  # iCloud catch-all mailbox. With an iCloud+ custom domain, every message sent
+  # to anything@yourdomain.com lands in this one inbox; we filter by "To:".
+  #
+  #   host      -> always imap.mail.me.com for iCloud
+  #   username  -> your primary Apple ID address (usually the @icloud.com one),
+  #               NOT the custom-domain alias
+  #   password  -> an APP-SPECIFIC PASSWORD, generated at appleid.apple.com
+  #               (Sign-In and Security > App-Specific Passwords). Your normal
+  #               Apple ID password will NOT work over IMAP.
+  host: "imap.mail.me.com"
+  port: 993
+  ssl: true
+  username: "you@icloud.com"
+  password: "xxxx-xxxx-xxxx-xxxx"   # app-specific password
+  mailbox: "INBOX"
+
+  # Only accept emails from these senders (substring match, case-insensitive).
+  # Prevents grabbing a code from an unrelated message.
+  # NOTE: iCloud Hide My Email rewrites the sender to an @icloud.com relay like
+  #   No-reply_at_transaction_samsclub_com_...@icloud.com
+  # so match on the bare token "samsclub" (present in both that relay form and a
+  # normal samsclub.com address), NOT "samsclub.com".
+  from_contains:
+    - "samsclub"
+
+  # How long to wait for the verification email to arrive, and how often to poll.
+  timeout_seconds: 180
+  poll_interval_seconds: 5
+
+verification:
+  # "code"  -> the email contains a numeric code you type into a field.
+  # "link"  -> the email contains an activation URL the browser must open.
+  # Set this once you've seen a real Sam's Club verification email.
+  mode: "code"
+
+  # Regex that captures the numeric code (used when mode = "code").
+  # Default grabs a standalone 6-digit number. The first capture group is used.
+  code_regex: '\b(\d{6})\b'
+
+  # Regex that captures the activation link (used when mode = "link").
+  # Default grabs any samsclub.com URL. The first capture group is used.
+  link_regex: '(https?://[^\s"''<>]*samsclub\.com[^\s"''<>]*)'
+
+browser:
+  headless: false          # Keep visible so you can solve CAPTCHAs.
+  slow_mo_ms: 150          # Small delay between actions to look less robotic.
+  timeout_ms: 30000        # Default per-action timeout.
+  persist_sessions: true
+  state_dir: "state"       # Where per-account storage_state json files live.
+  screenshot_dir: "screenshots"
+
+  # --- Looking like a real browser (recommended for Sam's Club) ---
+  # Sam's Club's "press and hold" bot check hard-blocks stripped-down automation
+  # browsers. Driving REAL Google Chrome with a persistent profile that has
+  # already passed a challenge ("warmed") from your normal home IP is the best
+  # way to avoid it. Solve one press-and-hold by hand and the profile is usually
+  # trusted afterward.
+  channel: "chrome"             # use installed Google Chrome (not bundled Chromium)
+  user_data_dir: "chrome-profile"  # one persistent profile reused across accounts
+  stealth: true                 # apply anti-automation-detection patches
+  # NOTE: when user_data_dir is set, proxies below are ignored — you WANT your
+  # trusted home IP here, not a fresh proxy IP that gets challenged.
+
+pacing:
+  # Random wait (seconds) between finishing one account and starting the next,
+  # so the run doesn't hammer the site at machine speed.
+  between_accounts_min: 20
+  between_accounts_max: 60
+
+proxies:
+  # Route each account through a proxy so you're not hitting Sam's Club from the
+  # same IP for every membership. Set enabled: false to run without proxies.
+  enabled: true
+  file: "proxies.txt"        # one proxy per line; git-ignored (see proxies.example.txt)
+  # How a proxy is chosen per account:
+  #   sticky      -> the SAME proxy every run for a given primary account
+  #                 (recommended: a stable IP per account looks natural; an
+  #                  account that hops IPs run-to-run looks suspicious)
+  #   round_robin -> cycle through the list across accounts
+  #   random      -> pick one at random per account
+  rotation: "sticky"
+
+# -----------------------------------------------------------------------------
+# Sam's Club page map.
+# The complimentary-membership form and its field names are CONFIRMED from a
+# real saved page. Items marked (TODO) render only after you click Save (the OTP
+# step) or on pages we haven't captured yet — we finalize those on the first run.
+# Everything the browser touches lives here, so fixing a selector never needs a
+# code change.
+# -----------------------------------------------------------------------------
+sams:
+  login_url: "https://www.samsclub.com/login"                                  # TODO confirm on first run
+  add_member_url: "https://www.samsclub.com/account/manage-memberships/complimentary-membership"
+  logout_url: "https://www.samsclub.com/logout"   # used to switch accounts in a shared profile
+
+  selectors:
+    # --- Login page (TODO: confirm against the real sign-in page) ---
+    # type-based selectors are more robust than name-based on Sam's login.
+    login_email: "input[type='email']"
+    login_password: "input[type='password']"
+    login_submit: "button[type='submit']"
+    # Element that only exists once logged in. Empty = skip the check (safe for
+    # the first watched run; we'll add the real one so login failures are caught).
+    logged_in_marker: ""
+
+    # --- Complimentary-membership form (CONFIRMED from saved page) ---
+    add_first_name: "input[name='firstName']"
+    add_last_name: "input[name='lastName']"
+    add_email: "input[name='email']"
+    add_phone: "input[name='phone']"
+    # This form has NO address fields; leave these empty so they're skipped.
+    add_address1: ""
+    add_address2: ""
+    add_city: ""
+    add_state: ""
+    add_zip: ""
+    # The submit button is a type=submit labeled "Save".
+    add_submit: "button[type='submit']:has-text('Save')"
+
+    # --- OTP entry, shown in a modal after Save (TODO: confirm on first run) ---
+    # Common shape for a single OTP field; we'll correct it from the run's
+    # screenshot if Sam's uses segmented boxes instead.
+    code_input: "input[autocomplete='one-time-code']"
+    code_submit: "button[type='submit']"
+
+    # --- New-account signup after the code (flow "B", TODO: confirm on first run)
+    # Where the new membership sets its OWN password. Left empty = this step is
+    # skipped; fill these in once the first run reveals the signup page, and the
+    # new account's password comes from the 'secondary_password' CSV column.
+    create_password: ""
+    create_password_confirm: ""
+    create_submit: ""
+
+    # Element shown once the member is confirmed. Empty = don't hard-fail (TODO).
+    success_marker: ""
+
+  # CAPTCHA handling (headful only). Sam's uses PerimeterX "press and hold",
+  # whose container is typically #px-captcha. When seen, the script pauses for
+  # you to solve it, then resumes. Empty to disable. (TODO: confirm on first run)
+  captcha_marker: "#px-captcha"
+  captcha_wait_seconds: 300
