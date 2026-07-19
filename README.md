@@ -37,9 +37,10 @@ resume any time.
 ## Setup
 
 ```bash
-# 1. Python deps + browser
-python -m pip install -r requirements.txt
+# 1. Python deps + browser (installs the package so `python -m sams_automation` works)
+python -m pip install -e .
 playwright install chromium
+# (No install? Run in place with:  export PYTHONPATH=src )
 
 # 2. Your config and profile list (both git-ignored)
 cp config.example.yaml config.yaml

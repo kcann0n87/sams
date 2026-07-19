@@ -28,9 +28,13 @@ cd ~/sams
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python -m playwright install chromium   # bundled browser (fallback); real Chrome is used via channel
+python -m pip install -e .                # installs the package so `python -m sams_automation` works
+python -m playwright install chromium     # bundled browser (fallback); real Chrome is used via channel
 ```
+
+> If you didn't `pip install -e .` (e.g. you grabbed the code as a ZIP and just
+> want to run in place), set `PYTHONPATH` first each session instead:
+> `export PYTHONPATH=src`
 
 You also need Google Chrome installed normally (you already have it).
 
