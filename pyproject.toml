@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "sams-automation"
 version = "0.1.0"
 description = "Automate registering Sam's Club complimentary secondary members."
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = [
     "playwright>=1.44",
     "PyYAML>=6.0",
