@@ -120,6 +120,7 @@ class SamsFlow:
         Skipped unless the create_password selector is configured (so it's a
         no-op until we've confirmed the real signup page on the first run).
         """
+        self._dump(page, "PAGE-after-otp-signup")
         if not self.sel.get("create_password"):
             return
         if not account.secondary_password:
@@ -161,6 +162,7 @@ class SamsFlow:
                 page.goto(self.cfg.sams.logout_url, wait_until="domcontentloaded")
         page.goto(self.cfg.sams.login_url, wait_until="domcontentloaded")
         self._maybe_captcha(page, account)
+        self._dump(page, "PAGE-login")  # capture the real login page every run
 
         # In ephemeral mode a saved session may already have us logged in.
         if not shared and marker and self._is_visible(page, marker, timeout_ms=4000):
@@ -187,6 +189,7 @@ class SamsFlow:
     def _open_add_member(self, page: Page, account: Account) -> None:
         page.goto(self.cfg.sams.add_member_url, wait_until="domcontentloaded")
         self._maybe_captcha(page, account)
+        self._dump(page, "PAGE-add-member")
         self._shot(page, account, "add-member-page")
 
     def _fill_member_form(self, page: Page, account: Account) -> None:
@@ -204,6 +207,8 @@ class SamsFlow:
         self._shot(page, account, "member-form-filled")
         self._click(page, "add_submit")
         self._maybe_captcha(page, account)
+        page.wait_for_timeout(2500)  # let the OTP modal render
+        self._dump(page, "PAGE-after-save-otp")
 
     def _handle_verification(
         self, page: Page, account: Account, trigger_time: datetime
@@ -292,6 +297,7 @@ class SamsFlow:
             page.fill(selector, value)
         except PWTimeout:
             if required:
+                self._dump(page, f"NOTFOUND-{key}")
                 raise FlowError(f"Could not find field '{key}' ({selector}).")
 
     def _select(self, page: Page, key: str, value: str, required: bool = True) -> None:
@@ -304,13 +310,31 @@ class SamsFlow:
             page.select_option(selector, value)
         except PWTimeout:
             if required:
+                self._dump(page, f"NOTFOUND-{key}")
                 raise FlowError(f"Could not find select '{key}' ({selector}).")
 
     def _click(self, page: Page, key: str) -> None:
         selector = self._resolve(key)
         if not selector:
             raise FlowError(f"Selector '{key}' is not configured.")
-        page.click(selector)
+        try:
+            page.click(selector)
+        except PWTimeout:
+            self._dump(page, f"NOTFOUND-{key}")
+            raise FlowError(f"Could not click '{key}' ({selector}).")
+
+    def _dump(self, page: Page, name: str) -> None:
+        """Save a screenshot AND the page's HTML — used to find real selectors."""
+        ts = datetime.now(timezone.utc).strftime("%H%M%S")
+        base = Path(self.cfg.browser.screenshot_dir) / f"{name}-{ts}"
+        try:
+            page.screenshot(path=str(base) + ".png", full_page=True)
+        except Exception:
+            pass
+        try:
+            Path(str(base) + ".html").write_text(page.content(), encoding="utf-8")
+        except Exception:
+            pass
 
     def _is_visible(self, page: Page, selector: str, timeout_ms: int) -> bool:
         try:

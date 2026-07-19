@@ -157,6 +157,13 @@ INDEX_HTML = """<!doctype html>
     <div id="log"></div>
   </div>
 
+  <div class="card" id="pagescard" style="display:none">
+    <h2>Captured pages (send these to Claude)</h2>
+    <p class="note">Right-click a link → <b>Download Linked File</b>, then send me the file.
+      These are the real page contents I use to finish the selectors.</p>
+    <div id="pages"></div>
+  </div>
+
   <div class="card">
     <h2>Screenshots <span class="note" id="shotcount"></span></h2>
     <div class="shots" id="shots"></div>
@@ -199,6 +206,10 @@ async function tick(){
      '<figure><a href="/screenshots/'+encodeURIComponent(n)+'" target="_blank">'+
      '<img src="/screenshots/'+encodeURIComponent(n)+'"></a>'+
      '<figcaption>'+n+'</figcaption></figure>').join('');
+  const pages = s.pages || [];
+  document.getElementById('pagescard').style.display = pages.length ? 'block' : 'none';
+  document.getElementById('pages').innerHTML = pages.map(n =>
+     '<div style="margin:4px 0"><a href="/screenshots/'+encodeURIComponent(n)+'" download>'+n+'</a></div>').join('');
 }
 loadInfo();
 tick();
@@ -245,12 +256,16 @@ def create_app(config_path: str, accounts_path: str) -> Flask:
             pass
         shot_dir = root / cfg_shot_dir
         shots: list[str] = []
+        pages: list[str] = []
         if shot_dir.is_dir():
-            files = sorted(shot_dir.glob("*.png"), key=lambda p: p.stat().st_mtime,
+            pngs = sorted(shot_dir.glob("*.png"), key=lambda p: p.stat().st_mtime,
+                          reverse=True)
+            shots = [p.name for p in pngs[:60]]
+            htmls = sorted(shot_dir.glob("*.html"), key=lambda p: p.stat().st_mtime,
                            reverse=True)
-            shots = [p.name for p in files[:60]]
+            pages = [p.name for p in htmls[:30]]
         return jsonify(running=job.running, kind=job.kind,
-                       lines=list(job.lines), screenshots=shots)
+                       lines=list(job.lines), screenshots=shots, pages=pages)
 
     @app.get("/screenshots/<path:name>")
     def screenshot(name: str):

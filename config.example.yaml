@@ -102,8 +102,9 @@ sams:
 
   selectors:
     # --- Login page (TODO: confirm against the real sign-in page) ---
-    login_email: "input[name='email']"
-    login_password: "input[name='password']"
+    # type-based selectors are more robust than name-based on Sam's login.
+    login_email: "input[type='email']"
+    login_password: "input[type='password']"
     login_submit: "button[type='submit']"
     # Element that only exists once logged in. Empty = skip the check (safe for
     # the first watched run; we'll add the real one so login failures are caught).
