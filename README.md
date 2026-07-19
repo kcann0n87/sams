@@ -102,6 +102,12 @@ Useful flags: `--only someone@yourdomain.com` (one specific row),
 `--no-resume` (don't skip completed rows), `--headless` (no window — only once
 the flow is proven and CAPTCHA-free).
 
+## Getting it working the first time
+
+See **[docs/FIRST_RUN.md](docs/FIRST_RUN.md)** — a step-by-step for proving the
+flow on one real account, including using Playwright's recorder to capture the
+real page's selectors in one pass.
+
 ## Tuning to the real page (we do this together)
 
 The URLs and every selector live in `config.yaml` under `sams:` — the Python
