@@ -60,6 +60,25 @@ class SamsConfig:
 
 
 @dataclass
+class ActivationConfig:
+    """Phase 2 — the NEW secondary member activating their own membership.
+
+    After the main account adds the member (phase 1), the member receives an
+    email and finishes setup themselves (sets their own password). This controls
+    that second half.
+    """
+
+    # Run activation as a SEPARATE browser session, so it behaves like the new
+    # member logging in on their own device rather than reusing the primary's
+    # signed-in session. Recommended.
+    new_session: bool
+    # Optional URL a secondary member visits to activate when the email carries a
+    # numeric code rather than a click-through link. Leave empty to stay on
+    # whatever page the code flow lands on.
+    url: str
+
+
+@dataclass
 class ProxyConfig:
     enabled: bool
     file: str
@@ -74,6 +93,7 @@ class Config:
     pacing: PacingConfig
     sams: SamsConfig
     proxies: ProxyConfig
+    activation: ActivationConfig
 
 
 @dataclass
@@ -111,6 +131,15 @@ REQUIRED_ACCOUNT_COLUMNS = [
     "secondary_email",
 ]
 
+# Full recommended header for the account list, in order. Required columns first,
+# then the optional ones. Used to generate the blank CSV template in the web UI
+# so a family member can fill it in without guessing the column names.
+TEMPLATE_COLUMNS = [
+    *REQUIRED_ACCOUNT_COLUMNS,
+    "phone",
+    "secondary_password",
+]
+
 
 def load_config(path: str | Path) -> Config:
     path = Path(path)
@@ -132,6 +161,7 @@ def load_config(path: str | Path) -> Config:
     pacing = section("pacing")
     sams = section("sams")
     proxies = raw.get("proxies") or {}
+    activation = raw.get("activation") or {}
 
     cfg = Config(
         imap=ImapConfig(
@@ -179,6 +209,10 @@ def load_config(path: str | Path) -> Config:
             enabled=bool(proxies.get("enabled", False)),
             file=proxies.get("file", "proxies.txt"),
             rotation=proxies.get("rotation", "sticky"),
+        ),
+        activation=ActivationConfig(
+            new_session=bool(activation.get("new_session", True)),
+            url=activation.get("url", "") or "",
         ),
     )
 

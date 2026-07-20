@@ -12,15 +12,39 @@ Start it with:  python -m sams_automation serve
 from __future__ import annotations
 
 import collections
+import csv
+import io
 import subprocess
 import sys
+import tempfile
 import threading
 import webbrowser
 from pathlib import Path
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from .config import load_accounts, load_config
+from .config import TEMPLATE_COLUMNS, Account, load_accounts, load_config
+
+# Cap uploads so a stray huge file can't exhaust memory. An account list is tiny.
+MAX_UPLOAD_BYTES = 2 * 1024 * 1024  # 2 MB
+
+
+def _preview_rows(accounts: list[Account]) -> list[dict[str, str]]:
+    """Account list -> rows safe to show in the browser (passwords masked)."""
+    rows: list[dict[str, str]] = []
+    for a in accounts:
+        rows.append(
+            {
+                "primary_email": a.primary_email,
+                "primary_password": "••••••" if a.primary_password else "—",
+                "secondary_first": a.secondary_first,
+                "secondary_last": a.secondary_last,
+                "secondary_email": a.secondary_email,
+                "phone": a.phone or "—",
+                "secondary_password": "••••••" if a.secondary_password else "—",
+            }
+        )
+    return rows
 
 
 class Job:
@@ -109,6 +133,27 @@ INDEX_HTML = """<!doctype html>
   .shots figcaption { font-size:11px; opacity:.7; margin-top:3px; word-break:break-all; }
   .note { font-size:13px; opacity:.8; line-height:1.5; }
   h2 { font-size:15px; margin:0 0 12px; }
+  .drop { border:2px dashed #b7bcc4; border-radius:11px; padding:26px 16px;
+          text-align:center; cursor:pointer; transition:.15s; }
+  .drop:hover { border-color:#0071dc; background:rgba(0,113,220,.04); }
+  .drop.over { border-color:#0071dc; background:rgba(0,113,220,.10); }
+  .drop b { color:#0071dc; }
+  @media (prefers-color-scheme: dark){ .drop{ border-color:#4a4d55; } }
+  .tablewrap { overflow-x:auto; margin-top:12px; }
+  table.preview { border-collapse:collapse; width:100%; font-size:12.5px; }
+  table.preview th, table.preview td { text-align:left; padding:6px 9px;
+          border-bottom:1px solid rgba(0,0,0,.09); white-space:nowrap; }
+  @media (prefers-color-scheme: dark){ table.preview th, table.preview td{ border-color:rgba(255,255,255,.10);} }
+  table.preview th { font-size:11px; text-transform:uppercase; letter-spacing:.03em; opacity:.65; }
+  .msg.err { color:#c0392b; } .msg.ok { color:#1a8a3a; } .msg.warn { color:#9a6a00; }
+  .badge { font-size:11px; font-weight:700; padding:2px 8px; border-radius:20px; }
+  .badge.ok { background:#d6f5df; color:#177a38; }
+  .badge.bad { background:#fbdcda; color:#b3261e; }
+  .badge.wait { background:#e6e8eb; color:#555; }
+  @media (prefers-color-scheme: dark){
+    .badge.ok{ background:#1d4a2c; color:#8fe6a8; }
+    .badge.bad{ background:#5a211d; color:#f3a8a1; }
+    .badge.wait{ background:#3a3b40; color:#bbb; } }
 </style>
 </head>
 <body>
@@ -124,6 +169,24 @@ INDEX_HTML = """<!doctype html>
         <div class="stat"><b id="imapuser" style="font-size:14px">–</b><span>iCloud inbox</span></div>
       </div>
       <span class="pill idle" id="statuspill">idle</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Account list (CSV)</h2>
+    <p class="note">One row per membership: the <b>main account</b> login plus the
+      <b>new member</b> to add. Each row is run end to end — the main account adds
+      the member, then the new member activates and sets their own password.
+      <a href="/api/template.csv" download>Download a blank template ↓</a></p>
+    <div class="drop" id="drop" onclick="document.getElementById('file').click()">
+      <input id="file" type="file" accept=".csv,text/csv" style="display:none"
+             onchange="if(this.files[0])uploadFile(this.files[0])">
+      <div><b>Choose a CSV</b> or drag &amp; drop it here</div>
+      <div class="note" style="margin-top:6px">Passwords stay on this machine.</div>
+    </div>
+    <p class="msg" id="upmsg"></p>
+    <div class="tablewrap" id="previewwrap" style="display:none">
+      <table class="preview" id="preview"></table>
     </div>
   </div>
 
@@ -164,6 +227,11 @@ INDEX_HTML = """<!doctype html>
     <div id="pages"></div>
   </div>
 
+  <div class="card" id="resultscard" style="display:none">
+    <h2>Results <span class="note" id="resultsnote"></span></h2>
+    <div class="tablewrap"><table class="preview" id="results"></table></div>
+  </div>
+
   <div class="card">
     <h2>Screenshots <span class="note" id="shotcount"></span></h2>
     <div class="shots" id="shots"></div>
@@ -189,6 +257,44 @@ async function savePw(){
   document.getElementById('pwmsg').textContent = j.ok ? 'Saved ✓' : ('Error: '+(j.error||'failed'));
   if(j.ok){ document.getElementById('pw').value=''; loadInfo(); }
 }
+function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c =>
+   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function renderPreview(data){
+  const wrap = document.getElementById('previewwrap');
+  const t = document.getElementById('preview');
+  if(!data.rows || !data.rows.length){ wrap.style.display='none'; t.innerHTML=''; return; }
+  const cols = data.columns || Object.keys(data.rows[0]);
+  let html = '<thead><tr>' + cols.map(c => '<th>'+escapeHtml(c)+'</th>').join('') + '</tr></thead><tbody>';
+  html += data.rows.map(r => '<tr>' + cols.map(c => '<td>'+escapeHtml(r[c] ?? '')+'</td>').join('') + '</tr>').join('');
+  html += '</tbody>';
+  t.innerHTML = html;
+  wrap.style.display = 'block';
+}
+async function loadAccounts(){
+  const d = await jget('/api/accounts');
+  if(d.ok) renderPreview(d);
+}
+async function uploadFile(file){
+  const msg = document.getElementById('upmsg');
+  msg.className = 'msg'; msg.textContent = 'Checking '+file.name+' …';
+  const fd = new FormData(); fd.append('file', file);
+  let j;
+  try { const r = await fetch('/api/upload-csv',{method:'POST',body:fd}); j = await r.json(); }
+  catch(e){ msg.className='msg err'; msg.textContent='Upload failed: '+e; return; }
+  if(!j.ok){ msg.className='msg err'; msg.textContent='✗ '+j.error; return; }
+  msg.className = j.warning ? 'msg warn' : 'msg ok';
+  msg.textContent = '✓ Loaded '+j.count+' account(s).' + (j.warning ? '  ⚠ '+j.warning : '');
+  renderPreview(j);
+  loadInfo();
+}
+const drop = document.getElementById('drop');
+['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => {
+  const f = e.dataTransfer.files[0]; if(f) uploadFile(f); });
+
 let lastLen = 0;
 async function tick(){
   const s = await jget('/api/status');
@@ -210,8 +316,30 @@ async function tick(){
   document.getElementById('pagescard').style.display = pages.length ? 'block' : 'none';
   document.getElementById('pages').innerHTML = pages.map(n =>
      '<div style="margin:4px 0"><a href="/screenshots/'+encodeURIComponent(n)+'" download>'+n+'</a></div>').join('');
+  renderResults();
+}
+const STATUS_BADGE = { ok:'ok', no_code:'bad', flow_error:'bad', error:'bad' };
+async function renderResults(){
+  const d = await jget('/api/results');
+  const card = document.getElementById('resultscard');
+  const rows = (d && d.rows) || [];
+  if(!rows.length){ card.style.display='none'; return; }
+  card.style.display = 'block';
+  const okN = rows.filter(r => r.status === 'ok').length;
+  document.getElementById('resultsnote').textContent = '('+okN+'/'+rows.length+' done)';
+  let html = '<thead><tr><th>main account</th><th>new member</th><th>status</th><th>detail</th><th>when</th></tr></thead><tbody>';
+  html += rows.map(r => {
+    const cls = STATUS_BADGE[r.status] || 'wait';
+    const label = r.status === 'ok' ? 'done' : (r.status || '');
+    return '<tr><td>'+escapeHtml(r.primary_email||'')+'</td><td>'+escapeHtml(r.secondary_email||'')+
+      '</td><td><span class="badge '+cls+'">'+escapeHtml(label)+'</span></td><td>'+escapeHtml(r.detail||'')+
+      '</td><td>'+escapeHtml((r.timestamp||'').replace('T',' ').replace('+00:00',' UTC'))+'</td></tr>';
+  }).join('');
+  html += '</tbody>';
+  document.getElementById('results').innerHTML = html;
 }
 loadInfo();
+loadAccounts();
 tick();
 setInterval(tick, 1500);
 </script>
@@ -319,6 +447,119 @@ def create_app(config_path: str, accounts_path: str) -> Flask:
             return jsonify(ok=True)
         except Exception as e:
             return jsonify(ok=False, error=str(e))
+
+    # -- account list: upload / preview / template -------------------------
+
+    @app.get("/api/accounts")
+    def api_accounts():
+        """Current account list as a masked preview (empty if none yet)."""
+        try:
+            accts = load_accounts(accounts_path)
+            return jsonify(
+                ok=True, count=len(accts), columns=TEMPLATE_COLUMNS,
+                rows=_preview_rows(accts),
+            )
+        except FileNotFoundError:
+            return jsonify(ok=True, count=0, columns=TEMPLATE_COLUMNS, rows=[])
+        except Exception as e:
+            return jsonify(ok=False, error=str(e), rows=[])
+
+    @app.get("/api/template.csv")
+    def api_template():
+        """Download a blank CSV with the right header (+ one example row)."""
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(TEMPLATE_COLUMNS)
+        w.writerow(
+            [
+                "member1@example.com", "PrimaryPassw0rd!", "Jane", "Doe",
+                "jane.doe@yourdomain.com", "3125550101", "NewMemberPass1!",
+            ]
+        )
+        return Response(
+            buf.getvalue(),
+            mimetype="text/csv",
+            headers={
+                "Content-Disposition": "attachment; filename=accounts-template.csv"
+            },
+        )
+
+    @app.post("/api/upload-csv")
+    def api_upload_csv():
+        """Validate an uploaded CSV and, if valid, make it the active account list.
+
+        Accepts a multipart file field named 'file'. Validates by running it
+        through the real loader; on success the previous list is backed up to
+        accounts.csv.bak and the new one takes its place.
+        """
+        f = request.files.get("file")
+        if f is None or not f.filename:
+            return jsonify(ok=False, error="No file was uploaded.")
+        raw = f.read(MAX_UPLOAD_BYTES + 1)
+        if len(raw) > MAX_UPLOAD_BYTES:
+            return jsonify(ok=False, error="File is too large (max 2 MB).")
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return jsonify(
+                ok=False,
+                error="File isn't UTF-8 text. Export it as a plain CSV.",
+            )
+
+        # Validate against the real loader before touching anything on disk.
+        tmp = Path(tempfile.gettempdir()) / f"sams_upload_{id(raw)}.csv"
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            accts = load_accounts(tmp)
+        except ValueError as e:
+            # The loader names the temp path; show the uploaded file's name instead.
+            msg = str(e).replace(str(tmp), f"'{f.filename}'")
+            return jsonify(ok=False, error=msg)
+        except Exception as e:
+            return jsonify(ok=False, error=f"{type(e).__name__}: {e}")
+        finally:
+            tmp.unlink(missing_ok=True)
+
+        if not accts:
+            return jsonify(ok=False, error="The CSV has a header but no rows.")
+
+        dest = Path(accounts_path)
+        try:
+            if dest.exists():
+                dest.replace(dest.with_suffix(dest.suffix + ".bak"))
+            dest.write_text(text, encoding="utf-8")
+        except Exception as e:
+            return jsonify(ok=False, error=f"Couldn't save the list: {e}")
+
+        # Flag rows with no secondary_password — activation (phase 2) needs it.
+        no_pw = sum(1 for a in accts if not a.secondary_password)
+        warn = ""
+        if no_pw:
+            warn = (
+                f"{no_pw} row(s) have no secondary_password. Phase 2 activation "
+                "sets the new member's password, so add one per row unless your "
+                "activation page doesn't ask for a password."
+            )
+        return jsonify(
+            ok=True, count=len(accts), columns=TEMPLATE_COLUMNS,
+            rows=_preview_rows(accts), warning=warn,
+        )
+
+    @app.get("/api/results")
+    def api_results():
+        """Per-account outcomes from results.csv (most recent run wins)."""
+        path = root / "results.csv"
+        if not path.exists():
+            return jsonify(ok=True, rows=[])
+        latest: dict[str, dict[str, str]] = {}
+        try:
+            with path.open(newline="", encoding="utf-8") as fh:
+                for row in csv.DictReader(fh):
+                    key = row.get("secondary_email") or row.get("primary_email") or ""
+                    latest[key] = row  # later rows overwrite earlier -> newest state
+        except Exception as e:
+            return jsonify(ok=False, error=str(e), rows=[])
+        return jsonify(ok=True, rows=list(latest.values()))
 
     return app
 

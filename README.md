@@ -20,19 +20,28 @@ for every account.
 
 ## What it does
 
-For each row in `accounts.csv` it:
+You give it **one CSV** — one row per membership — and it runs **both sides** of
+each row end to end:
 
-1. Logs into the **primary** account (reusing a saved session when possible).
-2. Opens the *add a member* form and fills in the **secondary** profile
-   (name + email + address).
-3. Submits, then watches your iCloud catch-all inbox for the Sam's Club
-   verification email addressed to that secondary email.
-4. Extracts the **code** (or **activation link**) and completes verification.
-5. Records the outcome in `results.csv` and screenshots every step under
-   `screenshots/`.
+**Phase 1 — the main account adds the member.** It logs into the **primary**
+account (reusing a saved session when possible), opens the *add a member* form,
+fills in the new member's name + email (+ phone), and submits. That triggers the
+activation email.
 
-It skips accounts already marked `ok` in `results.csv`, so you can stop and
-resume any time.
+**Phase 2 — the new member activates their own membership.** It watches your
+iCloud catch-all inbox for the Sam's Club email addressed to that member,
+extracts the **code** (or **activation link**), and — by default in a fresh
+browser session, as if the member did it on their own device — opens it and sets
+the member's **own password** (from the `secondary_password` column).
+
+It records each outcome in `results.csv`, screenshots every step under
+`screenshots/`, and skips rows already marked `ok`, so you can stop and resume
+any time. This is built so one person can run it for the **whole family** from a
+single uploaded list — nobody else has to touch it.
+
+The two-phase behavior is configurable under `activation:` in `config.yaml`
+(`new_session: true` runs phase 2 as a separate session; set it `false` to keep
+everything in the primary's one session).
 
 ## Setup
 
@@ -54,8 +63,34 @@ Then edit:
   an **app-specific password** generated at
   [appleid.apple.com](https://appleid.apple.com) (Sign-In and Security →
   App-Specific Passwords). Your normal Apple ID password will not work over IMAP.
-- **`accounts.csv`** — one row per membership: the primary login plus the
-  secondary member's name, email (on your catch-all domain), and address.
+- **`accounts.csv`** — one row per membership: the primary login plus the new
+  member's name, email (on your catch-all domain), phone, and the password the
+  new member's account should use (`secondary_password`).
+
+## The easy way: the web UI (upload a CSV, click a button)
+
+If you'd rather not use the terminal — the setup for the rest of the family —
+start the local web page and drive everything with buttons:
+
+```bash
+python -m sams_automation serve
+```
+
+It opens `http://127.0.0.1:8765/` in your browser, where you can:
+
+- **Download a blank CSV template**, fill it in, and **drag & drop it back**
+  (or click to pick it). The list is validated the instant you upload — missing
+  columns or empty rows are rejected with a plain-English message, and you get a
+  **preview table** (passwords masked) confirming exactly what will run.
+- Paste your iCloud **app password**, **test the email connection**, then
+  **Run 1 account** or **Run all accounts** — solving the one-time "press & hold"
+  check in the Chrome window when it appears.
+- Watch **live progress**, per-step **screenshots**, and a **Results** table
+  showing which members are done.
+
+Everything stays on your machine; the page just runs the same commands below for
+you. The uploaded list is saved as `accounts.csv` (the previous one is kept as
+`accounts.csv.bak`).
 
 ## Verify before you run anything
 

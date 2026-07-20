@@ -30,6 +30,32 @@ def test_example_config_loads():
     assert c.sams.logout_url.startswith("http")
     # proxies section
     assert c.proxies.rotation in ("sticky", "round_robin", "random")
+    # activation (phase 2) section
+    assert c.activation.new_session is True
+    assert c.activation.url == ""
+    # secondary-side selectors are present (empty placeholders are fine)
+    for key in ("activate_code_input", "activate_submit", "create_password",
+                "activation_success_marker"):
+        assert key in c.sams.selectors
+
+
+def test_activation_defaults_when_section_absent():
+    # An older config with no `activation:` section must still load with sane
+    # defaults (new_session on), so upgrading never breaks an existing config.
+    import yaml
+
+    from sams_automation import config as cfgmod
+
+    raw = yaml.safe_load((ROOT / "config.example.yaml").read_text())
+    raw.pop("activation", None)
+    tmp = ROOT / "tests" / "_tmp_config.yaml"
+    tmp.write_text(yaml.safe_dump(raw))
+    try:
+        c = cfgmod.load_config(tmp)
+        assert c.activation.new_session is True
+        assert c.activation.url == ""
+    finally:
+        tmp.unlink()
 
 
 def test_example_accounts_load():

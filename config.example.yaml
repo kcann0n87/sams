@@ -87,6 +87,24 @@ proxies:
   #   random      -> pick one at random per account
   rotation: "sticky"
 
+activation:
+  # Each account row runs in TWO phases:
+  #   Phase 1 (MAIN account)   -> the primary logs in and adds the member.
+  #   Phase 2 (SECONDARY member) -> the new member activates their OWN membership
+  #                                 using the emailed link/code and sets their
+  #                                 own password (from the secondary_password
+  #                                 CSV column).
+  #
+  # new_session: run phase 2 in a fresh browser session, as if the new member
+  # opened the email on their own device instead of the primary doing it from
+  # their signed-in session. Recommended. Set false to keep everything in the
+  # primary's single session (legacy behavior).
+  new_session: true
+  # Optional page a secondary member visits to activate when the email carries a
+  # numeric CODE rather than a click-through link. Leave "" to stay on whatever
+  # page the flow lands on. (Ignored when verification.mode is "link".)
+  url: ""
+
 # -----------------------------------------------------------------------------
 # Sam's Club page map.
 # The complimentary-membership form and its field names are CONFIRMED from a
@@ -124,21 +142,30 @@ sams:
     # The submit button is a type=submit labeled "Save".
     add_submit: "button[type='submit']:has-text('Save')"
 
-    # --- OTP entry, shown in a modal after Save (TODO: confirm on first run) ---
-    # Common shape for a single OTP field; we'll correct it from the run's
-    # screenshot if Sam's uses segmented boxes instead.
+    # --- Phase 2: SECONDARY member activation (TODO: confirm on first run) ---
+    # The activation page the new member lands on from the emailed code/link.
+    #
+    # For a numeric CODE: where the member types it in. Falls back to code_input
+    # / code_submit below if these dedicated keys are left empty.
+    activate_code_input: ""
+    activate_submit: ""
+    # Generic OTP field (used if the code is entered on the same page after Save,
+    # or as the fallback for activate_code_input above). Common single-field
+    # shape; we'll correct it from the run's screenshot if Sam's uses segmented
+    # boxes instead.
     code_input: "input[autocomplete='one-time-code']"
     code_submit: "button[type='submit']"
 
-    # --- New-account signup after the code (flow "B", TODO: confirm on first run)
-    # Where the new membership sets its OWN password. Left empty = this step is
-    # skipped; fill these in once the first run reveals the signup page, and the
-    # new account's password comes from the 'secondary_password' CSV column.
+    # Where the new member sets their OWN password to finish activation. Left
+    # empty = this step is skipped; fill these in once the first run reveals the
+    # activation page. The password comes from the 'secondary_password' CSV column.
     create_password: ""
     create_password_confirm: ""
     create_submit: ""
 
-    # Element shown once the member is confirmed. Empty = don't hard-fail (TODO).
+    # Element shown once activation succeeds. activation_success_marker wins for
+    # phase 2; success_marker is the generic fallback. Empty = don't hard-fail.
+    activation_success_marker: ""
     success_marker: ""
 
   # CAPTCHA handling (headful only). Sam's uses PerimeterX "press and hold",

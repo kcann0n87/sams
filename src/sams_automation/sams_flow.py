@@ -24,7 +24,7 @@ from playwright.sync_api import (
 )
 
 from .config import Account, Config
-from .imap_client import ImapClient, VerificationResult
+from .imap_client import ImapClient
 from .proxies import ProxyPool
 from .stealth import STEALTH_INIT_JS
 
@@ -49,6 +49,9 @@ class SamsFlow:
         # When set (real-Chrome persistent-profile mode), one warmed profile is
         # reused across all accounts and we log out/in between them.
         self.shared_context = shared_context
+        # The browser currently driving an ephemeral run, so phase 2 can open a
+        # brand-new context for the secondary member. None in shared-profile mode.
+        self._current_browser: Browser | None = None
         self.sel = cfg.sams.selectors
         Path(cfg.browser.screenshot_dir).mkdir(parents=True, exist_ok=True)
         Path(cfg.browser.state_dir).mkdir(parents=True, exist_ok=True)
@@ -90,6 +93,7 @@ class SamsFlow:
             print(f"    via proxy {proxy.label}")
 
         browser = self.pw.chromium.launch(**launch_kwargs)
+        self._current_browser = browser
         try:
             context = self._new_context(browser, account)
             if self.cfg.browser.stealth:
@@ -104,28 +108,119 @@ class SamsFlow:
             finally:
                 context.close()
         finally:
+            self._current_browser = None
             browser.close()
 
     def _run_member_flow(self, page: Page, account: Account) -> None:
+        """Both sides of one membership, end to end.
+
+        Phase 1 (MAIN account): the primary — already logged in on ``page`` —
+        adds the secondary member and submits the form. This triggers the
+        activation email to the member's address.
+
+        Phase 2 (SECONDARY member): the new member activates their own
+        membership. By default this runs in a fresh browser session (see
+        ``activation.new_session``) so it behaves like the member setting things
+        up themselves, not the primary doing it from their signed-in session.
+        """
+        # ---- Phase 1: main account adds the member ----------------------------
+        print("    [phase 1/2] main account: adding the secondary member")
         self._open_add_member(page, account)
         trigger_time = datetime.now(timezone.utc)
         self._fill_member_form(page, account)
-        self._handle_verification(page, account, trigger_time)
-        self._create_account(page, account)
-        self._confirm_success(page, account)
 
-    def _create_account(self, page: Page, account: Account) -> None:
-        """Flow 'B': after the code, set the new account's password.
+        # ---- Phase 2: the new member activates their membership --------------
+        print("    [phase 2/2] secondary member: activating the new membership")
+        self._activate_secondary(page, account, trigger_time)
 
-        Skipped unless the create_password selector is configured (so it's a
-        no-op until we've confirmed the real signup page on the first run).
+    def _activate_secondary(
+        self, primary_page: Page, account: Account, trigger_time: datetime
+    ) -> None:
+        """Wait for the activation email, then finish setup AS the new member.
+
+        Pulls the code/link out of the catch-all inbox, opens it (in a fresh
+        session by default), sets the member's own password, and confirms.
         """
-        self._dump(page, "PAGE-after-otp-signup")
+        result = self.imap.wait_for_verification(
+            to_address=account.secondary_email,
+            since=trigger_time,
+            verification=self.cfg.verification,
+        )
+
+        page, cleanup = self._secondary_page(primary_page)
+        try:
+            if self.cfg.verification.mode == "link":
+                if not result.link:
+                    raise FlowError(
+                        f"No activation link extracted for {account.secondary_email}."
+                    )
+                page.goto(result.link, wait_until="domcontentloaded")
+                self._maybe_captcha(page, account)
+            else:  # "code"
+                if self.cfg.activation.url:
+                    page.goto(self.cfg.activation.url, wait_until="domcontentloaded")
+                    self._maybe_captcha(page, account)
+                if not result.code:
+                    raise FlowError(
+                        f"No activation code extracted for {account.secondary_email}."
+                    )
+                # Prefer a dedicated activation field; fall back to the generic one.
+                code_key = "activate_code_input" if self.sel.get(
+                    "activate_code_input"
+                ) else "code_input"
+                submit_key = "activate_submit" if self.sel.get(
+                    "activate_submit"
+                ) else "code_submit"
+                self._fill(page, code_key, result.code)
+                self._shot(page, account, "activation-code-entered")
+                self._click(page, submit_key)
+                self._maybe_captcha(page, account)
+
+            self._dump(page, "PAGE-activation")
+            self._shot(page, account, "activation-opened")
+            self._set_secondary_password(page, account)
+            self._confirm_success(page, account)
+        finally:
+            cleanup()
+
+    def _secondary_page(self, primary_page: Page):
+        """Return ``(page, cleanup)`` for the secondary member's activation.
+
+        With ``activation.new_session`` (default) this is a brand-new context —
+        a clean session, as if the member opened the email on their own device.
+        Otherwise it reuses the primary's page (legacy single-session behavior).
+        """
+        if not self.cfg.activation.new_session:
+            return primary_page, (lambda: None)
+
+        if self._current_browser is not None:
+            # Ephemeral mode: a fresh incognito context is a truly separate login.
+            ctx = self._current_browser.new_context()
+            if self.cfg.browser.stealth:
+                ctx.add_init_script(STEALTH_INIT_JS)
+            page = ctx.new_page()
+            page.set_default_timeout(self.cfg.browser.timeout_ms)
+            return page, ctx.close
+
+        # Shared persistent-profile mode can't spawn an isolated context, so use a
+        # fresh page/tab in the warmed profile. (It shares cookies with the
+        # primary; an activation link still opens fine there.)
+        page = self.shared_context.new_page()
+        page.set_default_timeout(self.cfg.browser.timeout_ms)
+        return page, page.close
+
+    def _set_secondary_password(self, page: Page, account: Account) -> None:
+        """Set the new member's OWN password to complete activation.
+
+        Skipped (a no-op) until the ``create_password`` selector is configured,
+        which we confirm from the real activation page on the first run.
+        """
         if not self.sel.get("create_password"):
+            self._shot(page, account, "activation-no-password-step")
             return
         if not account.secondary_password:
             raise FlowError(
-                f"{account.secondary_email}: signup step needs a "
+                f"{account.secondary_email}: activation needs a "
                 "secondary_password but the account row has none."
             )
         self._maybe_captcha(page, account)
@@ -134,7 +229,7 @@ class SamsFlow:
             page, "create_password_confirm", account.secondary_password,
             required=False,
         )
-        self._shot(page, account, "create-account-filled")
+        self._shot(page, account, "secondary-password-filled")
         self._click(page, "create_submit")
         self._maybe_captcha(page, account)
 
@@ -276,42 +371,14 @@ class SamsFlow:
         self._shot(page, account, "member-form-filled")
         self._click(page, "add_submit")
         self._maybe_captcha(page, account)
-        page.wait_for_timeout(2500)  # let the OTP modal render
-        self._dump(page, "PAGE-after-save-otp")
-
-    def _handle_verification(
-        self, page: Page, account: Account, trigger_time: datetime
-    ) -> None:
-        result = self.imap.wait_for_verification(
-            to_address=account.secondary_email,
-            since=trigger_time,
-            verification=self.cfg.verification,
-        )
-        if self.cfg.verification.mode == "code":
-            self._enter_code(page, account, result)
-        else:
-            self._open_link(page, account, result)
-
-    def _enter_code(
-        self, page: Page, account: Account, result: VerificationResult
-    ) -> None:
-        if not result.code:
-            raise FlowError(f"No code extracted for {account.secondary_email}.")
-        self._fill(page, "code_input", result.code)
-        self._shot(page, account, "code-entered")
-        self._click(page, "code_submit")
-
-    def _open_link(
-        self, page: Page, account: Account, result: VerificationResult
-    ) -> None:
-        if not result.link:
-            raise FlowError(f"No link extracted for {account.secondary_email}.")
-        page.goto(result.link, wait_until="domcontentloaded")
-        self._maybe_captcha(page, account)
-        self._shot(page, account, "activation-link-opened")
+        page.wait_for_timeout(2500)  # let the confirmation render
+        self._dump(page, "PAGE-after-save")
 
     def _confirm_success(self, page: Page, account: Account) -> None:
-        marker = self.sel.get("success_marker")
+        # An activation-specific marker wins if configured, else the generic one.
+        marker = self.sel.get("activation_success_marker") or self.sel.get(
+            "success_marker"
+        )
         if not marker:
             self._shot(page, account, "done-no-marker")
             return
