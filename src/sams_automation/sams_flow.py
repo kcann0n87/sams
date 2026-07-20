@@ -430,34 +430,67 @@ class SamsFlow:
 
         Shared-profile runs reuse one browser across accounts, so a leftover
         session would run this account as the previous one. We hit the logout
-        URL, then confirm the email-entry field is showing; if the profile still
-        remembers the last account we click "Change", and as a last resort clear
-        the profile's cookies so the next sign-in starts fresh.
+        URL and confirm the email-entry field shows; if the profile still
+        remembers the last account we click "Change"; and if it's still signed
+        in we wipe cookies AND browser storage (Sam's keeps you signed in via
+        storage, not just cookies). If it STILL won't clear, we stop rather than
+        risk running this account as the previous one.
         """
+        print("    ensuring the previous account is signed out...")
         if self.cfg.sams.logout_url:
             try:
                 page.goto(self.cfg.sams.logout_url, wait_until="domcontentloaded")
                 page.wait_for_timeout(1500)
             except Exception:
                 pass
-        page.goto(self.cfg.sams.login_url, wait_until="domcontentloaded")
-
-        # Clean state = a fresh email-entry field is visible.
-        if self._first_visible(page, self.EMAIL_CANDIDATES, timeout_ms=4000):
+        if self._on_login_email_page(page):
             return
         # "Welcome back" remembers the previous account — reset to email entry.
         if self._click_first_any(page, ['a:has-text("Change")',
                                         'button:has-text("Change")']):
             page.wait_for_timeout(1000)
-            if self._first_visible(page, self.EMAIL_CANDIDATES, timeout_ms=4000):
+            if self._on_login_email_page(page):
                 return
-        # Still not clean: clear cookies and reload the login page.
+        # Still signed in: wipe cookies + storage, then reload.
+        print("    still signed in — clearing the profile's cookies and storage...")
+        self._clear_session()
+        if self._on_login_email_page(page):
+            return
+        self._dump(page, "logout-failed")
+        raise FlowError(
+            f"Couldn't sign out the previous account before starting "
+            f"{account.primary_email}. Stopping so this account isn't run as the "
+            "previous one. Fully quit Chrome (Cmd+Q) and re-run; if it persists, "
+            "delete the 'chrome-profile' folder to start fresh."
+        )
+
+    def _on_login_email_page(self, page: Page) -> bool:
+        """True once the clean email-entry login page is showing."""
+        page.goto(self.cfg.sams.login_url, wait_until="domcontentloaded")
+        return bool(self._first_visible(page, self.EMAIL_CANDIDATES, timeout_ms=5000))
+
+    def _clear_session(self) -> None:
+        """Wipe cookies and site storage for the shared profile."""
+        ctx = self.shared_context
+        if ctx is None:
+            return
         try:
-            if self.shared_context is not None:
-                self.shared_context.clear_cookies()
+            ctx.clear_cookies()
         except Exception:
             pass
-        page.goto(self.cfg.sams.login_url, wait_until="domcontentloaded")
+        try:
+            p = ctx.new_page()
+            try:
+                p.goto("https://www.samsclub.com/", wait_until="domcontentloaded",
+                       timeout=20000)
+                p.evaluate(
+                    "() => { try { localStorage.clear(); sessionStorage.clear(); } "
+                    "catch (e) {} }"
+                )
+            finally:
+                p.close()
+        except Exception:
+            pass
 
     def _uncheck_stay_signed_in(self, scope) -> None:
         """Best-effort: untick the 'Stay signed in' box so sessions don't persist."""
