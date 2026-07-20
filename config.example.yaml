@@ -124,6 +124,11 @@ sams:
     login_email: "input[type='email']"
     login_password: "input[type='password']"
     login_submit: "button[type='submit']"
+    # After the email, Sam's shows a "choose a sign-in method" page (text code /
+    # email code / enter your password). We pick this option to reveal the
+    # password field. Defaults to matching the text "Enter your password" if left
+    # empty; override if the wording differs.
+    login_password_option: "text=Enter your password"
     # Element that only exists once logged in. Empty = skip the check (safe for
     # the first watched run; we'll add the real one so login failures are caught).
     logged_in_marker: ""

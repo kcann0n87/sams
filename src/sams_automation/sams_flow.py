@@ -294,16 +294,35 @@ class SamsFlow:
             )
 
         scope.fill(found, account.primary_email)
-        # Password may be on the same page/frame or after a 'continue' click.
+        # Getting to the password field can take up to three shapes on Sam's:
+        #   (a) it's already on this page/frame,
+        #   (b) it appears after a 'Continue' click past the email step,
+        #   (c) Sam's shows a "choose a sign-in method" page and you must pick
+        #       "Enter your password" before the field is revealed.
         submit_sels = [self._resolve("login_submit"), "button[type='submit']"]
+        # Match the "Enter your password" option; overridable in config.
+        pw_option = self._resolve("login_password_option") or "text=Enter your password"
+
         pwd_scope, pwd = self._find_visible(page, self.PASSWORD_CANDIDATES, timeout_ms=3000)
-        if not pwd:
+        if not pwd:  # (b) advance past the email step
             self._click_first_any(page, submit_sels)
+            self._maybe_captcha(page, account)
             pwd_scope, pwd = self._find_visible(page, self.PASSWORD_CANDIDATES,
-                                                timeout_ms=self.cfg.browser.timeout_ms)
+                                                timeout_ms=6000)
+        if not pwd:  # (c) pick the password sign-in method, then look again
+            self._shot(page, account, "choose-signin-method")
+            if self._click_first_any(page, [pw_option]):
+                pwd_scope, pwd = self._find_visible(
+                    page, self.PASSWORD_CANDIDATES,
+                    timeout_ms=self.cfg.browser.timeout_ms,
+                )
         if not pwd:
             self._dump(page, "NOTFOUND-password")
-            raise FlowError("Could not find the password field after email.")
+            raise FlowError(
+                "Reached the sign-in page but couldn't find the password field. "
+                "If Sam's showed a 'choose a sign-in method' step, set "
+                "sams.selectors.login_password_option to match that option."
+            )
         pwd_scope.fill(pwd, account.primary_password)
         self._shot(page, account, "login-filled")
         self._click_first_any(page, submit_sels)
