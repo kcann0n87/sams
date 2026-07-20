@@ -76,6 +76,11 @@ class ActivationConfig:
     # numeric code rather than a click-through link. Leave empty to stay on
     # whatever page the code flow lands on.
     url: str
+    # Regex to pull the NEW membership/account number off the page shown right
+    # after the member is added in phase 1. That number is then pasted into the
+    # activation/registration page in phase 2. First capture group (or the whole
+    # match) is used. Empty = don't capture a number.
+    member_number_regex: str
 
 
 @dataclass
@@ -213,6 +218,7 @@ def load_config(path: str | Path) -> Config:
         activation=ActivationConfig(
             new_session=bool(activation.get("new_session", True)),
             url=activation.get("url", "") or "",
+            member_number_regex=activation.get("member_number_regex", "") or "",
         ),
     )
 
