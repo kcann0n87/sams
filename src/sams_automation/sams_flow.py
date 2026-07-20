@@ -493,12 +493,15 @@ class SamsFlow:
             if required:
                 raise FlowError(f"Selector '{key}' is not configured.")
             return
-        try:
-            page.fill(selector, value)
-        except PWTimeout:
+        # Frame-aware: Sam's renders forms inside iframes, so search every frame.
+        scope, sel = self._find_visible(page, [selector],
+                                        timeout_ms=self.cfg.browser.timeout_ms)
+        if not sel:
             if required:
                 self._dump(page, f"NOTFOUND-{key}")
                 raise FlowError(f"Could not find field '{key}' ({selector}).")
+            return
+        scope.fill(sel, value)
 
     def _select(self, page: Page, key: str, value: str, required: bool = True) -> None:
         selector = self._resolve(key)
@@ -506,22 +509,25 @@ class SamsFlow:
             if required:
                 raise FlowError(f"Selector '{key}' is not configured.")
             return
-        try:
-            page.select_option(selector, value)
-        except PWTimeout:
+        scope, sel = self._find_visible(page, [selector],
+                                        timeout_ms=self.cfg.browser.timeout_ms)
+        if not sel:
             if required:
                 self._dump(page, f"NOTFOUND-{key}")
                 raise FlowError(f"Could not find select '{key}' ({selector}).")
+            return
+        scope.select_option(sel, value)
 
     def _click(self, page: Page, key: str) -> None:
         selector = self._resolve(key)
         if not selector:
             raise FlowError(f"Selector '{key}' is not configured.")
-        try:
-            page.click(selector)
-        except PWTimeout:
+        scope, sel = self._find_visible(page, [selector],
+                                        timeout_ms=self.cfg.browser.timeout_ms)
+        if not sel:
             self._dump(page, f"NOTFOUND-{key}")
             raise FlowError(f"Could not click '{key}' ({selector}).")
+        scope.click(sel)
 
     def _dump(self, page: Page, name: str) -> None:
         """Save a screenshot AND the page's HTML — used to find real selectors.
