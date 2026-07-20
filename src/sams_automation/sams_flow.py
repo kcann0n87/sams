@@ -268,10 +268,12 @@ class SamsFlow:
 
         if shared:
             # One shared profile serves every account, so make sure we're not
-            # still signed in as the previous member before logging in.
-            if self.cfg.sams.logout_url:
-                page.goto(self.cfg.sams.logout_url, wait_until="domcontentloaded")
-        page.goto(self.cfg.sams.login_url, wait_until="domcontentloaded")
+            # still signed in as the previous member before logging in — and
+            # verify it, since a stale session would run this account as the
+            # previous one.
+            self._ensure_logged_out(page, account)
+        else:
+            page.goto(self.cfg.sams.login_url, wait_until="domcontentloaded")
 
         # In ephemeral mode a saved session may already have us logged in.
         if not shared and marker and self._is_visible(page, marker, timeout_ms=4000):
@@ -329,6 +331,10 @@ class SamsFlow:
                 "sams.selectors.login_password_option to match that option."
             )
         pwd_scope.fill(pwd, account.primary_password)
+        # In a shared profile, don't let the session stick — we log out between
+        # accounts, and "Stay signed in" fights that.
+        if self.shared_context is not None:
+            self._uncheck_stay_signed_in(pwd_scope)
         self._shot(page, account, "login-filled")
         # Click "Sign In" inside the same frame as the password; fall back widely.
         if not self._click_in_scope(pwd_scope, signin_sels):
@@ -374,6 +380,49 @@ class SamsFlow:
                 "didn't complete — still on the sign-in form. The Sign In button "
                 "may need a different selector (see the captured page)."
             )
+
+    def _ensure_logged_out(self, page: Page, account: Account) -> None:
+        """Guarantee a clean, signed-out login page before signing in.
+
+        Shared-profile runs reuse one browser across accounts, so a leftover
+        session would run this account as the previous one. We hit the logout
+        URL, then confirm the email-entry field is showing; if the profile still
+        remembers the last account we click "Change", and as a last resort clear
+        the profile's cookies so the next sign-in starts fresh.
+        """
+        if self.cfg.sams.logout_url:
+            try:
+                page.goto(self.cfg.sams.logout_url, wait_until="domcontentloaded")
+                page.wait_for_timeout(1500)
+            except Exception:
+                pass
+        page.goto(self.cfg.sams.login_url, wait_until="domcontentloaded")
+
+        # Clean state = a fresh email-entry field is visible.
+        if self._first_visible(page, self.EMAIL_CANDIDATES, timeout_ms=4000):
+            return
+        # "Welcome back" remembers the previous account — reset to email entry.
+        if self._click_first_any(page, ['a:has-text("Change")',
+                                        'button:has-text("Change")']):
+            page.wait_for_timeout(1000)
+            if self._first_visible(page, self.EMAIL_CANDIDATES, timeout_ms=4000):
+                return
+        # Still not clean: clear cookies and reload the login page.
+        try:
+            if self.shared_context is not None:
+                self.shared_context.clear_cookies()
+        except Exception:
+            pass
+        page.goto(self.cfg.sams.login_url, wait_until="domcontentloaded")
+
+    def _uncheck_stay_signed_in(self, scope) -> None:
+        """Best-effort: untick the 'Stay signed in' box so sessions don't persist."""
+        try:
+            cb = scope.get_by_label("Stay signed in")
+            if cb.count() and cb.is_checked():
+                cb.uncheck()
+        except Exception:
+            pass
 
     def _wait_for_login_form(self, page: Page, account: Account, candidates: list):
         """Poll for the login field, prompting the user to solve any challenge.
