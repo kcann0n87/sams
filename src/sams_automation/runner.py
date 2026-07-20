@@ -20,6 +20,16 @@ RESULTS_FILE = "results.csv"
 RESULTS_HEADER = ["timestamp", "primary_email", "secondary_email", "status", "detail"]
 
 
+def _is_profile_in_use(exc: Exception) -> bool:
+    """True if a persistent-context launch failed because Chrome is already open."""
+    msg = str(exc).lower()
+    return (
+        "opening in existing browser session" in msg
+        or "already in use" in msg
+        or "profile" in msg and "in use" in msg
+    )
+
+
 def _load_done(results_path: Path) -> set[str]:
     """Return secondary_emails already marked 'ok' so we can resume/skip."""
     done: set[str] = set()
@@ -110,12 +120,28 @@ def run(
                     f"profile '{cfg.browser.user_data_dir}'. Solve any press-and-hold "
                     "by hand; the profile stays warm for later accounts.\n"
                 )
-                shared_context = pw.chromium.launch_persistent_context(
-                    cfg.browser.user_data_dir,
-                    headless=cfg.browser.headless,
-                    slow_mo=cfg.browser.slow_mo_ms,
-                    channel=channel,
-                )
+                try:
+                    shared_context = pw.chromium.launch_persistent_context(
+                        cfg.browser.user_data_dir,
+                        headless=cfg.browser.headless,
+                        slow_mo=cfg.browser.slow_mo_ms,
+                        channel=channel,
+                    )
+                except Exception as e:
+                    if _is_profile_in_use(e):
+                        raise SystemExit(
+                            "\n"
+                            "Google Chrome is already running, so it couldn't open the\n"
+                            "automation's own window (the profile can't be shared with a\n"
+                            "Chrome you have open normally).\n\n"
+                            "Fix it:\n"
+                            "  1. Fully QUIT Google Chrome — click a Chrome window and press\n"
+                            "     Cmd+Q (just closing the windows isn't enough). The Chrome\n"
+                            "     icon in the Dock should have no dot under it.\n"
+                            "  2. View this dashboard in Safari instead of Chrome.\n"
+                            "  3. Run again.\n"
+                        ) from e
+                    raise
                 shared_context.set_default_timeout(cfg.browser.timeout_ms)
                 if cfg.browser.stealth:
                     shared_context.add_init_script(STEALTH_INIT_JS)

@@ -283,7 +283,9 @@ class SamsFlow:
         # to solve the challenge by hand in the Chrome window; only then fill.
         email_sel = self._resolve("login_email")
         candidates = ([email_sel] if email_sel else []) + self.EMAIL_CANDIDATES
-        found = self._wait_for_login_form(page, account, candidates)
+        # Sam's renders the sign-in form inside a /login/embed iframe, so we look
+        # in the page AND every child frame and remember which one holds it.
+        scope, found = self._wait_for_login_form(page, account, candidates)
         self._dump(page, "PAGE-login-form")  # capture the real form once visible
         if not found:
             raise FlowError(
@@ -291,19 +293,20 @@ class SamsFlow:
                 "bot challenge may not have been solved. See the captured page."
             )
 
-        page.fill(found, account.primary_email)
-        # Password may be on the same page or after a 'continue' click.
-        pwd = self._first_visible(page, self.PASSWORD_CANDIDATES, timeout_ms=3000)
+        scope.fill(found, account.primary_email)
+        # Password may be on the same page/frame or after a 'continue' click.
+        submit_sels = [self._resolve("login_submit"), "button[type='submit']"]
+        pwd_scope, pwd = self._find_visible(page, self.PASSWORD_CANDIDATES, timeout_ms=3000)
         if not pwd:
-            self._click_first(page, [self._resolve("login_submit"), "button[type='submit']"])
-            pwd = self._first_visible(page, self.PASSWORD_CANDIDATES,
-                                      timeout_ms=self.cfg.browser.timeout_ms)
+            self._click_first_any(page, submit_sels)
+            pwd_scope, pwd = self._find_visible(page, self.PASSWORD_CANDIDATES,
+                                                timeout_ms=self.cfg.browser.timeout_ms)
         if not pwd:
             self._dump(page, "NOTFOUND-password")
             raise FlowError("Could not find the password field after email.")
-        page.fill(pwd, account.primary_password)
+        pwd_scope.fill(pwd, account.primary_password)
         self._shot(page, account, "login-filled")
-        self._click_first(page, [self._resolve("login_submit"), "button[type='submit']"])
+        self._click_first_any(page, submit_sels)
         self._maybe_captcha(page, account)
 
         if marker:
@@ -317,14 +320,18 @@ class SamsFlow:
                 )
         self._shot(page, account, "logged-in")
 
-    def _wait_for_login_form(self, page: Page, account: Account, candidates: list) -> str | None:
-        """Poll for the login field, prompting the user to solve any challenge."""
+    def _wait_for_login_form(self, page: Page, account: Account, candidates: list):
+        """Poll for the login field, prompting the user to solve any challenge.
+
+        Returns ``(scope, selector)`` where ``scope`` is the page or the frame
+        that holds the field, or ``(None, None)`` on timeout.
+        """
         deadline = time.monotonic() + self.cfg.sams.captcha_wait_seconds
         prompted = False
         while time.monotonic() < deadline:
-            sel = self._first_visible(page, candidates, timeout_ms=1500)
+            scope, sel = self._find_visible(page, candidates, timeout_ms=1500)
             if sel:
-                return sel
+                return scope, sel
             if not prompted:
                 self._dump(page, "PAGE-login-challenge")
                 print(
@@ -334,21 +341,59 @@ class SamsFlow:
                 )
                 prompted = True
             time.sleep(2)
-        return None
+        return None, None
+
+    def _scopes(self, page: Page) -> list:
+        """The page plus every child frame — Sam's login lives in an iframe."""
+        scopes: list = [page]
+        try:
+            for fr in page.frames:
+                if fr is not page.main_frame:
+                    scopes.append(fr)
+        except Exception:
+            pass
+        return scopes
+
+    def _find_visible(self, page: Page, selectors: list, timeout_ms: int):
+        """First (scope, selector) visible in the page or any frame, else (None, None)."""
+        sels = [s for s in selectors if s]
+        if not sels:
+            return None, None
+        per = max(400, timeout_ms // len(sels))
+        for sel in sels:
+            for scope in self._scopes(page):
+                try:
+                    scope.wait_for_selector(sel, timeout=per, state="visible")
+                    return scope, sel
+                except PWTimeout:
+                    continue
+                except Exception:
+                    continue
+        return None, None
 
     def _first_visible(self, page: Page, selectors: list, timeout_ms: int) -> str | None:
-        """Return the first selector that becomes visible, else None."""
-        per = max(500, timeout_ms // max(1, len([s for s in selectors if s])))
+        """Return the first selector that becomes visible (any frame), else None."""
+        _, sel = self._find_visible(page, selectors, timeout_ms)
+        return sel
+
+    def _click_first_any(self, page: Page, selectors: list) -> bool:
+        """Click the first visible selector across the page and its frames."""
         for sel in selectors:
-            if sel and self._is_visible(page, sel, timeout_ms=per):
-                return sel
-        return None
+            if not sel:
+                continue
+            for scope in self._scopes(page):
+                try:
+                    scope.wait_for_selector(sel, timeout=1200, state="visible")
+                    scope.click(sel)
+                    return True
+                except PWTimeout:
+                    continue
+                except Exception:
+                    continue
+        return False
 
     def _click_first(self, page: Page, selectors: list) -> None:
-        for sel in selectors:
-            if sel and self._is_visible(page, sel, timeout_ms=1500):
-                page.click(sel)
-                return
+        self._click_first_any(page, selectors)
 
     def _open_add_member(self, page: Page, account: Account) -> None:
         page.goto(self.cfg.sams.add_member_url, wait_until="domcontentloaded")
@@ -460,7 +505,12 @@ class SamsFlow:
             raise FlowError(f"Could not click '{key}' ({selector}).")
 
     def _dump(self, page: Page, name: str) -> None:
-        """Save a screenshot AND the page's HTML — used to find real selectors."""
+        """Save a screenshot AND the page's HTML — used to find real selectors.
+
+        Sam's puts the login (and other) forms inside iframes, whose contents
+        aren't in ``page.content()``. So we also write each child frame's HTML to
+        ``<name>-frameN.html`` — that's where the real fields live.
+        """
         ts = datetime.now(timezone.utc).strftime("%H%M%S")
         base = Path(self.cfg.browser.screenshot_dir) / f"{name}-{ts}"
         try:
@@ -469,6 +519,21 @@ class SamsFlow:
             pass
         try:
             Path(str(base) + ".html").write_text(page.content(), encoding="utf-8")
+        except Exception:
+            pass
+        # Each iframe's own HTML (login form lives in one of these).
+        try:
+            i = 0
+            for fr in page.frames:
+                if fr is page.main_frame:
+                    continue
+                try:
+                    html = fr.content()
+                except Exception:
+                    continue
+                if html and html.strip():
+                    Path(f"{base}-frame{i}.html").write_text(html, encoding="utf-8")
+                    i += 1
         except Exception:
             pass
 
