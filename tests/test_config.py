@@ -28,6 +28,10 @@ def test_example_config_loads():
     # sams urls
     assert c.sams.login_url.startswith("http")
     assert c.sams.logout_url.startswith("http")
+    # login flow: passwordless email-code by default, manual code entry
+    assert c.sams.login_mode == "email_code"
+    assert c.sams.login_2fa in ("manual", "off")
+    assert c.sams.login_2fa_wait_seconds > 0
     # proxies section
     assert c.proxies.rotation in ("sticky", "round_robin", "random")
 
@@ -36,28 +40,49 @@ def test_example_accounts_load():
     accts = load_accounts(ROOT / "accounts.example.csv")
     assert len(accts) == 2
     a = accts[0]
-    # Complimentary-membership form needs name + email (+ optional phone), no address
+    # Complimentary-membership form needs name + email + phone, no address.
     assert a.primary_email and a.primary_password
     assert a.secondary_first and a.secondary_last and a.secondary_email
-    assert a.phone  # example rows include a phone
+    assert a.phone  # phone is required
     assert a.label == f"{a.primary_email} -> {a.secondary_email}"
 
 
 def test_accounts_load_without_address_columns():
     # A CSV with only the required columns (no address at all) must load fine.
-    import io
-
     from sams_automation import config as cfgmod
 
     csv_text = (
-        "primary_email,primary_password,secondary_first,secondary_last,secondary_email\n"
-        "p@x.com,pw,Jane,Doe,alias@icloud.com\n"
+        "primary_email,primary_password,secondary_first,secondary_last,"
+        "secondary_email,phone\n"
+        "p@x.com,pw,Jane,Doe,alias@icloud.com,3125550101\n"
     )
     tmp = ROOT / "tests" / "_tmp_accounts.csv"
     tmp.write_text(csv_text)
     try:
         accts = cfgmod.load_accounts(tmp)
         assert len(accts) == 1 and accts[0].address1 == "" and accts[0].zip == ""
+        assert accts[0].phone == "3125550101"
+    finally:
+        tmp.unlink()
+
+
+def test_missing_phone_column_is_rejected():
+    # phone is a required column now; a CSV without it must fail to load.
+    from sams_automation import config as cfgmod
+
+    csv_text = (
+        "primary_email,primary_password,secondary_first,secondary_last,secondary_email\n"
+        "p@x.com,pw,Jane,Doe,alias@icloud.com\n"
+    )
+    tmp = ROOT / "tests" / "_tmp_accounts_nophone.csv"
+    tmp.write_text(csv_text)
+    try:
+        raised = False
+        try:
+            cfgmod.load_accounts(tmp)
+        except ValueError:
+            raised = True
+        assert raised, "expected load_accounts to reject a CSV with no phone column"
     finally:
         tmp.unlink()
 

@@ -100,14 +100,36 @@ sams:
   add_member_url: "https://www.samsclub.com/account/manage-memberships/complimentary-membership"
   logout_url: "https://www.samsclub.com/logout"   # used to switch accounts in a shared profile
 
+  # How the primary account signs in:
+  #   email_code -> the real Sam's Club flow: enter email, click "Send
+  #                 authentication email", then finish with the emailed code.
+  #                 The tool fills the email and clicks the button for you, then
+  #                 PAUSES for you to type the code Sam's sends into the window;
+  #                 it continues automatically once you're signed in.
+  #   password   -> classic email + password form (Sam's often still forces an
+  #                 authentication email on top of this, so email_code is the
+  #                 default).
+  login_mode: "email_code"
+
+  # Manual login-code entry timeout (how long the tool waits for you to fetch the
+  # emailed code and sign in before giving up on that account).
+  login_2fa: "manual"          # "manual" (pause for you) or "off"
+  login_2fa_marker: ""         # optional selector that signals a 2FA prompt
+  login_2fa_wait_seconds: 300
+
   selectors:
     # --- Login page (TODO: confirm against the real sign-in page) ---
     # type-based selectors are more robust than name-based on Sam's login.
     login_email: "input[type='email']"
-    login_password: "input[type='password']"
+    login_password: "input[type='password']"      # only used in password mode
     login_submit: "button[type='submit']"
-    # Element that only exists once logged in. Empty = skip the check (safe for
-    # the first watched run; we'll add the real one so login failures are caught).
+    # The "Send authentication email" button on the passwordless login page.
+    # Empty = fall back to text matching ("Send authentication email"), which
+    # usually works; set the real selector here if the fallback ever misses.
+    login_send_email: ""
+    # Element that only exists once logged in. Empty = we fall back to detecting
+    # that the page has left the login URL; set the real one so login failures
+    # are caught precisely (recommended after the first watched run).
     logged_in_marker: ""
 
     # --- Complimentary-membership form (CONFIRMED from saved page) ---
