@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from sams_automation.imap_client import (  # noqa: E402
+    _extract_link,
     _from_matches,
     _hme_alias,
     _message_text,
@@ -123,6 +124,28 @@ def test_hme_to_matches_alias():
     m = email.message_from_string(HME_RAW)
     assert _to_matches(m, "59clawed-trade@icloud.com")
     assert not _to_matches(m, "someone-else@icloud.com")
+
+
+# Shape of the real "Welcome! Time to set up your account." activation email:
+# a logo link FIRST, then the register link, plus the membership number inline.
+WELCOME_BODY = """
+<a href="https://click.em.samsclub.com/?qs=LOGO123"><img alt="Sam's Club"></a>
+<td>Copy your membership number: 10142210501657745</td>
+<td><a href="https://click.em.samsclub.com/?qs=REGISTER456">Register your membership</a></td>
+<a href="https://click.em.samsclub.com/?qs=BTN789">Register Now</a>
+"""
+
+
+def test_extract_link_prefers_register_anchor_over_logo():
+    # Without a text hint, we'd grab the logo link (first URL); with the hint we
+    # grab the real "Register your membership" button.
+    assert _extract_link(WELCOME_BODY, LINK_RE, "").endswith("LOGO123")
+    assert _extract_link(WELCOME_BODY, LINK_RE, "register").endswith("REGISTER456")
+
+
+def test_membership_number_regex_from_email_body():
+    num_re = re.compile(r"(?i)membership number:?\s*(\d{8,})")
+    assert num_re.search(WELCOME_BODY).group(1) == "10142210501657745"
 
 
 def test_hme_code_from_subject_and_body():

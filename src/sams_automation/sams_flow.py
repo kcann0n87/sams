@@ -11,7 +11,6 @@ for manual CAPTCHA solving when running headful.
 
 from __future__ import annotations
 
-import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -124,7 +123,7 @@ class SamsFlow:
         ``activation.new_session``) so it behaves like the member setting things
         up themselves, not the primary doing it from their signed-in session.
         """
-        # New membership number issued in phase 1, pasted into activation later.
+        # New membership number — read out of the activation email in phase 2.
         self._member_number: str | None = None
 
         # ---- Phase 1: main account adds the member ----------------------------
@@ -132,7 +131,6 @@ class SamsFlow:
         self._open_add_member(page, account)
         trigger_time = datetime.now(timezone.utc)
         self._fill_member_form(page, account)
-        self._capture_member_number(page, account)
 
         # ---- Phase 2: the new member activates their membership --------------
         print("    [phase 2/2] secondary member: activating the new membership")
@@ -151,6 +149,10 @@ class SamsFlow:
             since=trigger_time,
             verification=self.cfg.verification,
         )
+        # The membership number to paste into registration comes from the email.
+        if result.member_number:
+            self._member_number = result.member_number
+            print(f"    new membership number: {self._member_number}")
 
         page, cleanup = self._secondary_page(primary_page)
         try:
@@ -189,54 +191,15 @@ class SamsFlow:
         finally:
             cleanup()
 
-    def _capture_member_number(self, page: Page, account: Account) -> None:
-        """Read the new membership number off the post-add page (phase 1).
-
-        Uses the ``member_number_marker`` selector's text if set, else scans the
-        page/frames text for ``activation.member_number_regex``. No-op until one
-        of those is configured from the real page.
-        """
-        marker = self.sel.get("member_number_marker")
-        regex = self.cfg.activation.member_number_regex
-        if not marker and not regex:
-            return
-        text = ""
-        if marker:
-            sc, sel = self._find_visible(page, [marker], timeout_ms=6000)
-            if sel:
-                try:
-                    text = sc.inner_text(sel)
-                except Exception:
-                    text = ""
-        if regex:
-            haystack = [text] if text else []
-            if not haystack:
-                for sc in self._scopes(page):
-                    try:
-                        haystack.append(sc.inner_text("body"))
-                    except Exception:
-                        continue
-            for hay in haystack:
-                m = re.search(regex, hay)
-                if m:
-                    self._member_number = (m.group(1) if m.groups() else m.group(0)).strip()
-                    break
-        elif text:
-            self._member_number = text.strip()
-        if self._member_number:
-            print(f"    captured new membership number: {self._member_number}")
-        else:
-            self._dump(page, "PAGE-member-number-not-found")
-
     def _enter_member_number(self, page: Page, account: Account) -> None:
-        """Paste the phase-1 membership number into the activation/registration page."""
+        """Paste the membership number (from the email) into registration."""
         if not self.sel.get("activate_member_number"):
             return
         if not self._member_number:
             raise FlowError(
-                f"{account.secondary_email}: activation needs the new membership "
-                "number, but none was captured after adding the member. Set "
-                "activation.member_number_regex / member_number_marker."
+                f"{account.secondary_email}: registration needs the new membership "
+                "number, but none was found in the activation email. Check "
+                "verification.member_number_regex."
             )
         self._fill(page, "activate_member_number", self._member_number)
         self._shot(page, account, "member-number-entered")

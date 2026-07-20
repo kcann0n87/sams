@@ -28,6 +28,11 @@ class VerificationConfig:
     mode: str  # "code" or "link"
     code_regex: str
     link_regex: str
+    # When extracting a link, prefer the <a> whose visible text contains this
+    # (e.g. "register"), so we grab the real activation button and not the logo.
+    link_text_contains: str = ""
+    # Pull the new membership number out of the activation email body.
+    member_number_regex: str = ""
 
 
 @dataclass
@@ -76,11 +81,6 @@ class ActivationConfig:
     # numeric code rather than a click-through link. Leave empty to stay on
     # whatever page the code flow lands on.
     url: str
-    # Regex to pull the NEW membership/account number off the page shown right
-    # after the member is added in phase 1. That number is then pasted into the
-    # activation/registration page in phase 2. First capture group (or the whole
-    # match) is used. Empty = don't capture a number.
-    member_number_regex: str
 
 
 @dataclass
@@ -186,6 +186,8 @@ def load_config(path: str | Path) -> Config:
             link_regex=verification.get(
                 "link_regex", r"(https?://[^\s\"'<>]*samsclub\.com[^\s\"'<>]*)"
             ),
+            link_text_contains=verification.get("link_text_contains", "") or "",
+            member_number_regex=verification.get("member_number_regex", "") or "",
         ),
         browser=BrowserConfig(
             headless=bool(browser.get("headless", False)),
@@ -218,7 +220,6 @@ def load_config(path: str | Path) -> Config:
         activation=ActivationConfig(
             new_session=bool(activation.get("new_session", True)),
             url=activation.get("url", "") or "",
-            member_number_regex=activation.get("member_number_regex", "") or "",
         ),
     )
 

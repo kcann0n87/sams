@@ -31,6 +31,7 @@ class VerificationResult:
     link: str | None
     subject: str
     received: datetime
+    member_number: str | None = None
 
 
 @dataclass
@@ -99,6 +100,11 @@ class ImapClient:
         deadline = time.monotonic() + self.cfg.timeout_seconds
         code_re = re.compile(verification.code_regex)
         link_re = re.compile(verification.link_regex)
+        num_re = (
+            re.compile(verification.member_number_regex)
+            if verification.member_number_regex
+            else None
+        )
         seen_uids: set[bytes] = set()
 
         while time.monotonic() < deadline:
@@ -117,17 +123,26 @@ class ImapClient:
                     m = code_re.search(body) or code_re.search(msg.get("Subject", ""))
                     code = m.group(1) if m else None
                 else:  # "link"
-                    m = link_re.search(body)
-                    link = m.group(1) if m else None
+                    link = _extract_link(
+                        body, link_re, verification.link_text_contains
+                    )
 
                 if (verification.mode == "code" and code) or (
                     verification.mode == "link" and link
                 ):
+                    member_number = None
+                    if num_re:
+                        mm = num_re.search(body)
+                        if mm:
+                            member_number = (
+                                mm.group(1) if mm.groups() else mm.group(0)
+                            ).strip()
                     return VerificationResult(
                         code=code,
                         link=link,
                         subject=msg.get("Subject", ""),
                         received=received,
+                        member_number=member_number,
                     )
             time.sleep(self.cfg.poll_interval_seconds)
 
@@ -253,6 +268,32 @@ class ImapClient:
 
 
 # -- helpers ------------------------------------------------------------------
+
+
+_ANCHOR_RE = re.compile(
+    r'<a\b[^>]*?href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _extract_link(body: str, link_re: "re.Pattern[str]", text_contains: str) -> str | None:
+    """Pull an activation link out of the email.
+
+    When ``text_contains`` is set (e.g. "register"), prefer the <a> whose visible
+    text contains it — that grabs the real "Register your membership" button
+    instead of the first samsclub.com URL (which is usually the logo). Falls back
+    to the plain ``link_re`` match.
+    """
+    if text_contains:
+        want = text_contains.lower()
+        for m in _ANCHOR_RE.finditer(body):
+            href = m.group(1)
+            text = re.sub(r"<[^>]+>", " ", m.group(2))
+            text = re.sub(r"\s+", " ", text).strip()
+            if want in text.lower():
+                return href
+    m = link_re.search(body)
+    return m.group(1) if m else None
 
 
 def _addresses(msg: Message, header: str) -> str:

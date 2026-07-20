@@ -35,10 +35,12 @@ imap:
   poll_interval_seconds: 5
 
 verification:
+  # This describes the PHASE 2 activation email the new member receives.
   # "code"  -> the email contains a numeric code you type into a field.
   # "link"  -> the email contains an activation URL the browser must open.
-  # Set this once you've seen a real Sam's Club verification email.
-  mode: "code"
+  # The real "Welcome! Time to set up your account." email carries a
+  # "Register your membership" LINK (plus the membership number), so: link.
+  mode: "link"
 
   # Regex that captures the numeric code (used when mode = "code").
   # Default grabs a standalone 6-digit number. The first capture group is used.
@@ -47,6 +49,15 @@ verification:
   # Regex that captures the activation link (used when mode = "link").
   # Default grabs any samsclub.com URL. The first capture group is used.
   link_regex: '(https?://[^\s"''<>]*samsclub\.com[^\s"''<>]*)'
+
+  # When mode = "link", prefer the <a> whose visible text contains this, so we
+  # click the real "Register your membership" button and not the logo link.
+  link_text_contains: "register"
+
+  # Pull the new membership number out of the activation email body (the email
+  # says: "Copy your membership number: 10142210501657745"). It's then pasted
+  # into the registration page. First capture group is used. Empty = don't grab.
+  member_number_regex: '(?i)membership number:?\s*(\d{8,})'
 
 browser:
   headless: false          # Keep visible so you can solve CAPTCHAs.
@@ -104,13 +115,6 @@ activation:
   # numeric CODE rather than a click-through link. Leave "" to stay on whatever
   # page the flow lands on. (Ignored when verification.mode is "link".)
   url: ""
-  # If Sam's shows a NEW membership/account number after you add the member, and
-  # the member's activation/registration page asks for that number, capture it
-  # with this regex from the phase-1 confirmation page. It's then pasted into the
-  # activate_member_number field in phase 2. First capture group is used. Leave
-  # "" if activation doesn't need a membership number. (Set once we see the real
-  # post-add page — e.g. something like: 'Membership\s*#?\s*(\d[\d ]{6,})'.)
-  member_number_regex: ""
 
 # -----------------------------------------------------------------------------
 # Sam's Club page map.
@@ -168,11 +172,10 @@ sams:
     code_input: "input[autocomplete='one-time-code']"
     code_submit: "button[type='submit']"
 
-    # The membership number issued when the member was added (phase 1) may need
-    # to be pasted into the activation/registration page. member_number_marker
-    # reads it off the post-add page (alternative to activation.member_number_regex);
-    # activate_member_number is the field it gets typed into. Empty = skip.
-    member_number_marker: ""
+    # The registration page (opened from the email's "Register your membership"
+    # link) asks for the membership number — which we read out of the email
+    # (verification.member_number_regex). This is the field it gets typed into.
+    # Empty = skip. (Set from the real registration page.)
     activate_member_number: ""
 
     # Where the new member sets their OWN password to finish activation. Left
