@@ -57,6 +57,17 @@ class SamsConfig:
     selectors: dict[str, str]
     captcha_marker: str
     captcha_wait_seconds: int
+    # How the primary account signs in:
+    #   "email_code" -> enter email, click "Send authentication email", then
+    #                   complete with the code Sam's emails (the real flow).
+    #   "password"   -> classic email + password form.
+    login_mode: str
+    # Primary-account login 2FA. "manual" pauses for you to type the code Sam's
+    # texts/emails you and resumes once you're signed in; "off" assumes no 2FA.
+    # (In "email_code" login_mode the emailed-code step is always manual.)
+    login_2fa: str
+    login_2fa_marker: str
+    login_2fa_wait_seconds: int
 
 
 @dataclass
@@ -85,6 +96,7 @@ class Account:
     secondary_first: str
     secondary_last: str
     secondary_email: str
+    # The complimentary-membership form requires a phone number.
     phone: str = ""
     # Password for the NEW account created after the invite code (flow "B").
     secondary_password: str = ""
@@ -109,6 +121,7 @@ REQUIRED_ACCOUNT_COLUMNS = [
     "secondary_first",
     "secondary_last",
     "secondary_email",
+    "phone",
 ]
 
 
@@ -174,6 +187,12 @@ def load_config(path: str | Path) -> Config:
             selectors=sams.get("selectors", {}),
             captcha_marker=sams.get("captcha_marker", ""),
             captcha_wait_seconds=int(sams.get("captcha_wait_seconds", 300)),
+            login_mode=str(sams.get("login_mode", "email_code")).lower(),
+            login_2fa=str(sams.get("login_2fa", "manual")).lower(),
+            login_2fa_marker=sams.get("login_2fa_marker", ""),
+            login_2fa_wait_seconds=int(
+                sams.get("login_2fa_wait_seconds", sams.get("captcha_wait_seconds", 300))
+            ),
         ),
         proxies=ProxyConfig(
             enabled=bool(proxies.get("enabled", False)),
@@ -185,6 +204,15 @@ def load_config(path: str | Path) -> Config:
     if cfg.verification.mode not in ("code", "link"):
         raise ValueError(
             f"verification.mode must be 'code' or 'link', got '{cfg.verification.mode}'"
+        )
+    if cfg.sams.login_mode not in ("email_code", "password"):
+        raise ValueError(
+            "sams.login_mode must be 'email_code' or 'password', got "
+            f"'{cfg.sams.login_mode}'"
+        )
+    if cfg.sams.login_2fa not in ("manual", "off"):
+        raise ValueError(
+            f"sams.login_2fa must be 'manual' or 'off', got '{cfg.sams.login_2fa}'"
         )
     if cfg.proxies.rotation not in ("sticky", "round_robin", "random"):
         raise ValueError(

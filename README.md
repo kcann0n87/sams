@@ -22,14 +22,22 @@ for every account.
 
 For each row in `accounts.csv` it:
 
-1. Logs into the **primary** account (reusing a saved session when possible).
-2. Opens the *add a member* form and fills in the **secondary** profile
-   (name + email + address).
+1. Signs into the **primary** account. Sam's Club sign-in is passwordless: the
+   tool enters your email and clicks **"Send authentication email"**, then
+   **pauses for you to type the emailed code** into the browser window. It
+   continues automatically the moment you're signed in. (Reuses a saved session
+   when possible so you don't re-auth every run. A classic password form is also
+   supported via `login_mode: password`.)
+2. Opens the *add a member* form and fills in the **companion** profile —
+   **name + email + phone**.
 3. Submits, then watches your iCloud catch-all inbox for the Sam's Club
-   verification email addressed to that secondary email.
+   verification email addressed to that companion email.
 4. Extracts the **code** (or **activation link**) and completes verification.
 5. Records the outcome in `results.csv` and screenshots every step under
    `screenshots/`.
+
+So the only thing you type by hand is the login code Sam's emails you; the rest
+(the companion's name/email/phone and the member-verification code) is automatic.
 
 It skips accounts already marked `ok` in `results.csv`, so you can stop and
 resume any time.
@@ -54,8 +62,9 @@ Then edit:
   an **app-specific password** generated at
   [appleid.apple.com](https://appleid.apple.com) (Sign-In and Security →
   App-Specific Passwords). Your normal Apple ID password will not work over IMAP.
-- **`accounts.csv`** — one row per membership: the primary login plus the
-  secondary member's name, email (on your catch-all domain), and address.
+- **`accounts.csv`** — one row per membership: the primary login email/password
+  plus the companion's **name, email** (on your catch-all domain), **and phone**.
+  All three companion fields are required; there are no address columns.
 
 ## Verify before you run anything
 

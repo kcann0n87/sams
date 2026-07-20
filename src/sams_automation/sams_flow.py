@@ -197,6 +197,60 @@ class SamsFlow:
             )
 
         page.fill(found, account.primary_email)
+        self._shot(page, account, "login-email-filled")
+
+        # Sam's Club's real sign-in is passwordless: enter email, request an
+        # authentication email, then complete with the emailed code. A classic
+        # password form is still supported via login_mode: password.
+        if self.cfg.sams.login_mode == "email_code":
+            self._login_email_code(page, account)
+        else:
+            self._login_password(page, account)
+
+        # Confirm we actually landed signed-in (manual paths already waited, so
+        # this returns quickly for them).
+        if not self._wait_signed_in(page, self.cfg.browser.timeout_ms):
+            self._shot(page, account, "login-failed")
+            raise FlowError(
+                f"Login did not complete for {account.primary_email} "
+                "(never reached a signed-in state)."
+            )
+        self._shot(page, account, "logged-in")
+
+    def _login_email_code(self, page: Page, account: Account) -> None:
+        """Passwordless login: request the auth email, then pause for the code.
+
+        We fill the email and click "Send authentication email" for you; you
+        retrieve the code Sam's sends and type it into the browser window. The
+        run continues automatically the moment you're signed in.
+        """
+        self._click_first(
+            page,
+            [
+                self._resolve("login_send_email"),
+                "button:has-text('Send authentication email')",
+                "button:has-text('authentication email')",
+                "button:has-text('Send')",
+                self._resolve("login_submit"),
+                "button[type='submit']",
+            ],
+        )
+        self._maybe_captcha(page, account)
+        self._dump(page, "PAGE-auth-email-requested")
+        self._shot(page, account, "auth-email-requested")
+        self._wait_for_manual_signin(
+            page,
+            account,
+            (
+                f"Sam's Club just emailed a sign-in code for "
+                f"{account.primary_email}.\n    Open that email, then type the "
+                "code into the Chrome window (and submit). The tool is waiting "
+                "and continues automatically once you're signed in."
+            ),
+        )
+
+    def _login_password(self, page: Page, account: Account) -> None:
+        """Classic email + password sign-in, with an optional manual 2FA pause."""
         # Password may be on the same page or after a 'continue' click.
         pwd = self._first_visible(page, self.PASSWORD_CANDIDATES, timeout_ms=3000)
         if not pwd:
@@ -210,17 +264,7 @@ class SamsFlow:
         self._shot(page, account, "login-filled")
         self._click_first(page, [self._resolve("login_submit"), "button[type='submit']"])
         self._maybe_captcha(page, account)
-
-        if marker:
-            try:
-                page.wait_for_selector(marker, timeout=self.cfg.browser.timeout_ms)
-            except PWTimeout:
-                self._shot(page, account, "login-failed")
-                raise FlowError(
-                    f"Login did not complete for {account.primary_email} "
-                    "(logged_in_marker never appeared)."
-                )
-        self._shot(page, account, "logged-in")
+        self._maybe_login_2fa(page, account)
 
     def _wait_for_login_form(self, page: Page, account: Account, candidates: list) -> str | None:
         """Poll for the login field, prompting the user to solve any challenge."""
@@ -262,17 +306,11 @@ class SamsFlow:
         self._shot(page, account, "add-member-page")
 
     def _fill_member_form(self, page: Page, account: Account) -> None:
+        # The complimentary-membership form takes name, email, and phone.
         self._fill(page, "add_first_name", account.secondary_first)
         self._fill(page, "add_last_name", account.secondary_last)
         self._fill(page, "add_email", account.secondary_email)
-        self._fill(page, "add_address1", account.address1, required=False)
-        if account.address2:
-            self._fill(page, "add_address2", account.address2, required=False)
-        self._fill(page, "add_city", account.city, required=False)
-        self._select(page, "add_state", account.state, required=False)
-        self._fill(page, "add_zip", account.zip, required=False)
-        if account.phone:
-            self._fill(page, "add_phone", account.phone, required=False)
+        self._fill(page, "add_phone", account.phone)
         self._shot(page, account, "member-form-filled")
         self._click(page, "add_submit")
         self._maybe_captcha(page, account)
@@ -351,6 +389,76 @@ class SamsFlow:
             time.sleep(2)
         raise FlowError("CAPTCHA was not solved in time.")
 
+    # -- sign-in detection & manual 2FA ---------------------------------------
+
+    def _signed_in(self, page: Page) -> bool:
+        """True once we're past the login/auth screens.
+
+        Prefers the configured logged_in_marker; with none set, falls back to
+        detecting that the page has left the login URL.
+        """
+        marker = self.sel.get("logged_in_marker")
+        if marker:
+            return self._is_visible(page, marker, timeout_ms=1500)
+        url = (page.url or "").lower()
+        return "login" not in url and "signin" not in url
+
+    def _wait_signed_in(self, page: Page, timeout_ms: int) -> bool:
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        while time.monotonic() < deadline:
+            if self._signed_in(page):
+                return True
+            time.sleep(1)
+        return self._signed_in(page)
+
+    def _wait_for_manual_signin(
+        self, page: Page, account: Account, prompt: str
+    ) -> None:
+        """Pause for the human to enter an emailed/texted code, then resume."""
+        if self.cfg.browser.headless:
+            raise FlowError(
+                "A sign-in code step appeared but the browser is headless. "
+                "Re-run with headless: false so you can enter the code."
+            )
+        print(f"\n[!] {prompt}\n")
+        deadline = time.monotonic() + self.cfg.sams.login_2fa_wait_seconds
+        while time.monotonic() < deadline:
+            if self._signed_in(page):
+                print("[+] Signed in, continuing.")
+                return
+            time.sleep(2)
+        self._shot(page, account, "login-2fa-timeout")
+        raise FlowError(
+            f"Sign-in for {account.primary_email} was not completed in "
+            f"{self.cfg.sams.login_2fa_wait_seconds}s."
+        )
+
+    def _maybe_login_2fa(self, page: Page, account: Account) -> None:
+        """Password mode only: pause for a 2FA code if a challenge appears."""
+        if self.cfg.sams.login_2fa == "off":
+            return
+        # Already through? Nothing to do.
+        if self._signed_in(page):
+            return
+        marker = self.cfg.sams.login_2fa_marker
+        challenge = bool(marker) and self._is_visible(page, marker, timeout_ms=3000)
+        # If there's no explicit challenge and no marker to key off, give the
+        # login a moment to land before assuming a 2FA prompt is present.
+        if not challenge and not self.sel.get("logged_in_marker"):
+            if self._wait_signed_in(page, 4000):
+                return
+        self._shot(page, account, "login-2fa")
+        self._wait_for_manual_signin(
+            page,
+            account,
+            (
+                f"Sam's Club is asking for a login verification code for "
+                f"{account.primary_email}.\n    Enter the code it sent "
+                "(text/email) in the Chrome window; the tool continues "
+                "automatically once you're signed in."
+            ),
+        )
+
     # -- low-level helpers ----------------------------------------------------
 
     def _resolve(self, key: str) -> str | None:
@@ -368,19 +476,6 @@ class SamsFlow:
             if required:
                 self._dump(page, f"NOTFOUND-{key}")
                 raise FlowError(f"Could not find field '{key}' ({selector}).")
-
-    def _select(self, page: Page, key: str, value: str, required: bool = True) -> None:
-        selector = self._resolve(key)
-        if not selector:
-            if required:
-                raise FlowError(f"Selector '{key}' is not configured.")
-            return
-        try:
-            page.select_option(selector, value)
-        except PWTimeout:
-            if required:
-                self._dump(page, f"NOTFOUND-{key}")
-                raise FlowError(f"Could not find select '{key}' ({selector}).")
 
     def _click(self, page: Page, key: str) -> None:
         selector = self._resolve(key)
