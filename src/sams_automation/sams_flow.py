@@ -185,24 +185,47 @@ class SamsFlow:
 
             self._dump(page, "PAGE-activation")
             self._shot(page, account, "activation-opened")
-            self._enter_member_number(page, account)
+            self._register_membership(page, account)
             self._set_secondary_password(page, account)
             self._confirm_success(page, account)
         finally:
             cleanup()
 
-    def _enter_member_number(self, page: Page, account: Account) -> None:
-        """Paste the membership number (from the email) into registration."""
-        if not self.sel.get("activate_member_number"):
-            return
+    def _register_membership(self, page: Page, account: Account) -> None:
+        """The "Register your membership" page: confirm info, then Continue.
+
+        Real page (Confirm your information): Membership number (17 digits) +
+        First name + Last name -> Continue. The number comes from the email; the
+        names from the CSV. Fields are matched by their visible labels (with
+        optional selector overrides), so this works inside Sam's iframes.
+        """
         if not self._member_number:
             raise FlowError(
                 f"{account.secondary_email}: registration needs the new membership "
                 "number, but none was found in the activation email. Check "
                 "verification.member_number_regex."
             )
-        self._fill(page, "activate_member_number", self._member_number)
-        self._shot(page, account, "member-number-entered")
+        num_sel = self.sel.get("activate_member_number")
+        if num_sel:
+            self._fill(page, "activate_member_number", self._member_number)
+        else:
+            self._fill_by_label(page, "Membership number", self._member_number)
+        # First/Last must match what Sam's has on file (from the CSV).
+        self._fill_by_label(page, "First name", account.secondary_first,
+                            required=False)
+        self._fill_by_label(page, "Last name", account.secondary_last,
+                            required=False)
+        self._shot(page, account, "registration-filled")
+        if not self._click_role_button(page, "Continue"):
+            self._click_first_any(
+                page, ['button:has-text("Continue")', "button[type='submit']"]
+            )
+        self._maybe_captcha(page, account)
+        # Whatever comes after Continue (email / create password) — capture it so
+        # we can finish wiring, and set the password if the field is present.
+        page.wait_for_timeout(2500)
+        self._dump(page, "PAGE-registration-next")
+        self._shot(page, account, "registration-continued")
 
     def _secondary_page(self, primary_page: Page):
         """Return ``(page, cleanup)`` for the secondary member's activation.
@@ -500,6 +523,34 @@ class SamsFlow:
         """Return the first selector that becomes visible (any frame), else None."""
         _, sel = self._find_visible(page, selectors, timeout_ms)
         return sel
+
+    def _fill_by_label(self, page: Page, label: str, value: str,
+                       required: bool = True) -> bool:
+        """Fill the input with this visible label, across the page and its frames."""
+        for scope in self._scopes(page):
+            try:
+                loc = scope.get_by_label(label, exact=False)
+                if loc.count() and loc.first.is_visible():
+                    loc.first.fill(value)
+                    return True
+            except Exception:
+                continue
+        if required:
+            self._dump(page, f"NOTFOUND-label-{label.replace(' ', '_')}")
+            raise FlowError(f"Could not find a field labeled '{label}'.")
+        return False
+
+    def _click_role_button(self, page: Page, name: str) -> bool:
+        """Click a button by its visible name, across the page and its frames."""
+        for scope in self._scopes(page):
+            try:
+                loc = scope.get_by_role("button", name=name, exact=False)
+                if loc.count() and loc.first.is_visible():
+                    loc.first.click()
+                    return True
+            except Exception:
+                continue
+        return False
 
     def _click_in_scope(self, scope, selectors: list) -> bool:
         """Click the first visible selector within one specific scope (page/frame)."""
