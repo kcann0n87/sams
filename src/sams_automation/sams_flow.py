@@ -302,10 +302,15 @@ class SamsFlow:
         submit_sels = [self._resolve("login_submit"), "button[type='submit']"]
         # Match the "Enter your password" option; overridable in config.
         pw_option = self._resolve("login_password_option") or "text=Enter your password"
+        # Sam's is iframe-heavy, so a bare button[type=submit] can click the wrong
+        # thing. Target the real buttons by their visible label first.
+        continue_sels = ['button:has-text("Continue")', *submit_sels]
+        signin_sels = ['button:has-text("Sign In")', *submit_sels]
 
         pwd_scope, pwd = self._find_visible(page, self.PASSWORD_CANDIDATES, timeout_ms=3000)
         if not pwd:  # (b) advance past the email step
-            self._click_first_any(page, submit_sels)
+            if not self._click_in_scope(scope, continue_sels):
+                self._click_first_any(page, continue_sels)
             self._maybe_captcha(page, account)
             pwd_scope, pwd = self._find_visible(page, self.PASSWORD_CANDIDATES,
                                                 timeout_ms=6000)
@@ -325,19 +330,50 @@ class SamsFlow:
             )
         pwd_scope.fill(pwd, account.primary_password)
         self._shot(page, account, "login-filled")
-        self._click_first_any(page, submit_sels)
+        # Click "Sign In" inside the same frame as the password; fall back widely.
+        if not self._click_in_scope(pwd_scope, signin_sels):
+            self._click_first_any(page, signin_sels)
         self._maybe_captcha(page, account)
+        self._confirm_signed_in(page, account, pwd_scope, pwd, marker)
+        self._shot(page, account, "logged-in")
 
+    def _confirm_signed_in(self, page, account, pwd_scope, pwd_sel, marker) -> None:
+        """Make sure the sign-in actually went through before moving on.
+
+        If the password field is still on screen a few seconds after Sign In,
+        the submit didn't take — try Enter as a fallback, then fail with a clear
+        message rather than silently walking into a bounced-to-login page.
+        """
         if marker:
             try:
                 page.wait_for_selector(marker, timeout=self.cfg.browser.timeout_ms)
+                return
             except PWTimeout:
                 self._shot(page, account, "login-failed")
                 raise FlowError(
                     f"Login did not complete for {account.primary_email} "
                     "(logged_in_marker never appeared)."
                 )
-        self._shot(page, account, "logged-in")
+        # No marker configured: use "did the sign-in form go away?" as the signal.
+        page.wait_for_timeout(3500)
+        still_scope, still = self._find_visible(page, self.PASSWORD_CANDIDATES,
+                                                timeout_ms=1500)
+        if still:  # try submitting via Enter in the password field
+            try:
+                still_scope.press(still, "Enter")
+            except Exception:
+                pass
+            self._maybe_captcha(page, account)
+            page.wait_for_timeout(3500)
+            still_scope, still = self._find_visible(page, self.PASSWORD_CANDIDATES,
+                                                    timeout_ms=1500)
+        if still:
+            self._dump(page, "login-not-advancing")
+            raise FlowError(
+                f"Entered the password for {account.primary_email} but sign-in "
+                "didn't complete — still on the sign-in form. The Sign In button "
+                "may need a different selector (see the captured page)."
+            )
 
     def _wait_for_login_form(self, page: Page, account: Account, candidates: list):
         """Poll for the login field, prompting the user to solve any challenge.
@@ -394,6 +430,21 @@ class SamsFlow:
         """Return the first selector that becomes visible (any frame), else None."""
         _, sel = self._find_visible(page, selectors, timeout_ms)
         return sel
+
+    def _click_in_scope(self, scope, selectors: list) -> bool:
+        """Click the first visible selector within one specific scope (page/frame)."""
+        for sel in selectors:
+            if not sel:
+                continue
+            try:
+                scope.wait_for_selector(sel, timeout=2500, state="visible")
+                scope.click(sel)
+                return True
+            except PWTimeout:
+                continue
+            except Exception:
+                continue
+        return False
 
     def _click_first_any(self, page: Page, selectors: list) -> bool:
         """Click the first visible selector across the page and its frames."""
