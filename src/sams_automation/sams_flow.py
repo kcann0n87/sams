@@ -525,6 +525,7 @@ class SamsFlow:
         since = trigger - timedelta(seconds=90)
         deadline = time.monotonic() + self.cfg.sams.captcha_wait_seconds
         start = time.monotonic()
+        last_probe = start
         seen: set[str] = set()
         entered = False
         hinted = False
@@ -533,6 +534,14 @@ class SamsFlow:
                 print("[+] Signed in, continuing.")
                 page.wait_for_timeout(1500)
                 return
+            # Verify sign-in on a SEPARATE tab so we never disturb the one you're
+            # typing in — the whole profile shares cookies, so if login completed
+            # anywhere, an authenticated page loads here without bouncing to /login.
+            if (time.monotonic() - last_probe) > 12:
+                last_probe = time.monotonic()
+                if self._probe_signed_in(page):
+                    print("[+] Signed in (verified on another tab), continuing.")
+                    return
             if not entered:
                 code = None
                 try:
@@ -581,18 +590,52 @@ class SamsFlow:
         )
 
     def _is_signed_in(self, page: Page) -> bool:
-        """True once we've navigated off the sign-in page.
+        """True once the sign-in form is gone (login completed).
 
-        Uses the URL leaving /login rather than the absence of input fields —
-        Sam's home page has a newsletter email box that would otherwise look
-        like we're still on the sign-in screen.
+        Sam's finishes login inside the /login/embed iframe without always
+        changing the top URL, and the home page has a footer newsletter email
+        box — so we check specifically whether a LOGIN iframe still shows an
+        email/password/code field. Also true if we've left the login URL.
         """
         try:
             url = (page.url or "").lower()
         except Exception:
+            url = ""
+        if url and "login" not in url and "signin" not in url and "sign-in" not in url:
+            return True
+        fields = self.EMAIL_CANDIDATES + self.PASSWORD_CANDIDATES + self.CODE_CANDIDATES
+        for fr in page.frames:
+            try:
+                if "login" not in (fr.url or "").lower():
+                    continue  # skip the top page + non-login iframes (footer box)
+                for sel in fields:
+                    el = fr.query_selector(sel)
+                    if el and el.is_visible():
+                        return False  # login form still present -> not signed in
+            except Exception:
+                continue
+        return True
+
+    def _probe_signed_in(self, page: Page) -> bool:
+        """Check sign-in on a throwaway tab so `page` (where you may be typing)
+        is never disturbed. The profile shares cookies, so an authenticated page
+        loads without bouncing to /login iff we're signed in somewhere."""
+        try:
+            probe = page.context.new_page()
+        except Exception:
             return False
-        return bool(url) and "login" not in url and "signin" not in url \
-            and "sign-in" not in url
+        try:
+            probe.set_default_timeout(self.cfg.browser.timeout_ms)
+            probe.goto(self.cfg.sams.add_member_url, wait_until="domcontentloaded")
+            probe.wait_for_timeout(1500)
+            return self._is_signed_in(probe)
+        except Exception:
+            return False
+        finally:
+            try:
+                probe.close()
+            except Exception:
+                pass
 
     def _ensure_logged_out(self, page: Page, account: Account) -> None:
         """Guarantee a clean, signed-out login page before signing in.
