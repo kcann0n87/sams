@@ -311,10 +311,15 @@ class SamsFlow:
         marker = self.sel.get("logged_in_marker")
 
         if shared:
-            # One shared profile serves every account, so make sure we're not
-            # still signed in as the previous member before logging in — and
-            # verify it, since a stale session would run this account as the
-            # previous one.
+            # If the warm profile is already signed in as THIS same account,
+            # reuse it — no logout, no re-login, no fresh press & hold. Only when
+            # it's a different account (or not signed in) do we force a clean
+            # logout, since a stale session would run this account as another.
+            if self._already_signed_in_as(page, account):
+                print("    already signed in as this account — reusing session.")
+                self._shot(page, account, "already-logged-in")
+                self._record_account(account)
+                return
             self._ensure_logged_out(page, account)
         else:
             page.goto(self.cfg.sams.login_url, wait_until="domcontentloaded")
@@ -350,6 +355,7 @@ class SamsFlow:
         # with no password; the code lands in the inbox we already read).
         if self.cfg.sams.login_method == "email_code":
             self._login_with_email_code(page, account, scope, continue_sels)
+            self._record_account(account)
             self._shot(page, account, "logged-in")
             return
 
@@ -393,7 +399,42 @@ class SamsFlow:
             self._click_first_any(page, signin_sels)
         self._maybe_captcha(page, account)
         self._confirm_signed_in(page, account, pwd_scope, pwd, marker)
+        self._record_account(account)
         self._shot(page, account, "logged-in")
+
+    # -- session reuse across runs (shared profile) ---------------------------
+
+    def _last_account_path(self) -> Path:
+        return Path(self.cfg.browser.state_dir) / "last_account.txt"
+
+    def _read_last_account(self) -> str:
+        try:
+            return self._last_account_path().read_text(encoding="utf-8").strip()
+        except Exception:
+            return ""
+
+    def _record_account(self, account: Account) -> None:
+        try:
+            self._last_account_path().write_text(
+                account.primary_email, encoding="utf-8"
+            )
+        except Exception:
+            pass
+
+    def _already_signed_in_as(self, page: Page, account: Account) -> bool:
+        """True if the warm profile is already signed in as this same account.
+
+        We only trust it when the last account we logged in as matches — then a
+        visit to /login that redirects away means we're still signed in.
+        """
+        if self._read_last_account() != account.primary_email:
+            return False
+        try:
+            page.goto(self.cfg.sams.login_url, wait_until="domcontentloaded")
+            page.wait_for_timeout(2500)
+        except Exception:
+            return False
+        return self._is_signed_in(page)
 
     def _confirm_signed_in(self, page, account, pwd_scope, pwd_sel, marker) -> None:
         """Make sure the sign-in actually went through before moving on.
