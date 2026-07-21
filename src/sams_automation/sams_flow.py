@@ -75,6 +75,172 @@ class SamsFlow:
         finally:
             page.close()
 
+    # -- password reset -------------------------------------------------------
+
+    def process_reset(self, account: Account) -> None:
+        """Run the forgot-password flow for one account (email + new password).
+
+        Reuses the same helpers as the login/add flow. The ``account`` here is a
+        lightweight stand-in built from the reset row: ``primary_email`` is the
+        account to reset and ``primary_password`` is the new password to set.
+        """
+        if self.shared_context is not None:
+            page = self.shared_context.new_page()
+            page.set_default_timeout(self.cfg.browser.timeout_ms)
+            try:
+                self._reset_flow(page, account)
+            finally:
+                page.close()
+            return
+        launch_kwargs: dict = {
+            "headless": self.cfg.browser.headless,
+            "slow_mo": self.cfg.browser.slow_mo_ms,
+        }
+        if self.cfg.browser.channel:
+            launch_kwargs["channel"] = self.cfg.browser.channel
+        browser = self.pw.chromium.launch(**launch_kwargs)
+        self._current_browser = browser
+        try:
+            context = browser.new_context()
+            if self.cfg.browser.stealth:
+                context.add_init_script(STEALTH_INIT_JS)
+            page = context.new_page()
+            page.set_default_timeout(self.cfg.browser.timeout_ms)
+            try:
+                self._reset_flow(page, account)
+            finally:
+                context.close()
+        finally:
+            self._current_browser = None
+            browser.close()
+
+    def _reset_flow(self, page: Page, account: Account) -> None:
+        """forgot-password -> email code -> set new password."""
+        email = account.primary_email
+        new_password = account.primary_password
+        print(f"    resetting password for {email}")
+        page.goto(self.cfg.reset.forgot_url, wait_until="domcontentloaded")
+
+        # 1) Enter the email on the sign-in page (also clears any press & hold).
+        email_sel = self.sel.get("reset_email") or self.sel.get("login_email")
+        candidates = ([email_sel] if email_sel else []) + self.EMAIL_CANDIDATES
+        scope, found = self._wait_for_login_form(page, account, candidates)
+        self._dump(page, "PAGE-reset-start")
+        if not found:
+            raise FlowError(f"Sign-in email field never appeared for {email}.")
+        scope.fill(found, email)
+        self._click_first_any(page, [
+            self._resolve("reset_email_submit"),
+            'button:has-text("Continue")', "button[type='submit']",
+        ])
+        self._maybe_captcha(page, account)
+
+        # 2) Pick "Enter your password" to reveal the Forgot-password link, then
+        #    open the forgot-password flow.
+        self._click_first_any(page, ["text=Enter your password"])
+        self._click_first_any(page, [
+            'a:has-text("Forgot password")', "text=Forgot password",
+            "text=Forgot your password",
+        ])
+        self._maybe_captcha(page, account)
+        self._dump(page, "PAGE-forgot")
+
+        # 3) The forgot page defaults to a TEXT code — switch to email:
+        #    "Try another way" -> "Email me a verification code" -> Send Code.
+        self._click_first_any(page, [
+            "text=Try another way", 'a:has-text("Try another way")',
+        ])
+        self._click_first_any(page, [
+            "text=Email me a verification code",
+            self._resolve("login_email_code_option"),
+        ])
+        trigger = datetime.now(timezone.utc)
+        self._click_first_any(page, [
+            'button:has-text("Send Code")', 'button:has-text("Send code")',
+            "button[type='submit']",
+        ])
+        self._maybe_captcha(page, account)
+        self._dump(page, "PAGE-reset-code")
+
+        # 3) Read the reset code from the inbox; enter it (or let you type it).
+        code = self._await_code(email, trigger, self.cfg.reset.code_regex)
+        code_cands = [self._resolve("reset_code_input"), *self.CODE_CANDIDATES]
+        if code:
+            print(f"    reset code: {code}")
+            cscope, csel = self._find_visible(page, code_cands,
+                                              timeout_ms=self.cfg.browser.timeout_ms)
+            if csel:
+                cscope.fill(csel, code)
+                self._click_first_any(page, [
+                    self._resolve("reset_code_submit"),
+                    'button:has-text("Verify")', 'button:has-text("Continue")',
+                    'button:has-text("Submit")', "button[type='submit']",
+                ])
+                self._maybe_captcha(page, account)
+            else:
+                self._prompt_manual(page, account,
+                                    f"enter the reset code {code} and continue")
+        else:
+            self._prompt_manual(page, account,
+                                "enter the reset code Sam's sent and continue")
+        self._dump(page, "PAGE-reset-newpassword")
+
+        # 4) Set the new password (twice) and submit.
+        if not self._fill_field(page, "reset_new_password", new_password,
+                                label="New password"):
+            self._dump(page, "NOTFOUND-reset_new_password")
+            raise FlowError(
+                f"Couldn't find the new-password field for {email}. Set "
+                "sams.selectors.reset_new_password."
+            )
+        self._fill_field(page, "reset_new_password_confirm", new_password,
+                        label="Confirm password", required=False)
+        self._shot(page, account, "reset-newpassword-filled")
+        self._click_first_any(page, [
+            self._resolve("reset_submit"),
+            'button:has-text("Save")', 'button:has-text("Reset")',
+            'button:has-text("Continue")', 'button:has-text("Submit")',
+            "button[type='submit']",
+        ])
+        self._maybe_captcha(page, account)
+        self._dump(page, "PAGE-reset-done")
+        self._shot(page, account, "reset-done")
+
+    def _await_code(self, email: str, trigger: datetime, code_regex: str):
+        """Read a numeric code emailed to `email`, or None on timeout."""
+        ver = VerificationConfig(
+            mode="code", code_regex=code_regex or r"\b(\d{6})\b", link_regex="",
+        )
+        try:
+            result = self.imap.wait_for_verification(
+                to_address=email, since=trigger - timedelta(seconds=90),
+                verification=ver,
+            )
+            return result.code
+        except VerificationTimeout:
+            return None
+
+    def _fill_field(self, page: Page, key: str, value: str, *, label: str,
+                    required: bool = True) -> bool:
+        """Fill by configured selector, else by visible label. True if filled."""
+        if self._resolve(key):
+            self._fill(page, key, value, required=required)
+            return True
+        return self._fill_by_label(page, label, value, required=required)
+
+    def _prompt_manual(self, page: Page, account: Account, what: str) -> None:
+        """Pause for you to finish a step in the browser, then continue."""
+        print(
+            f"\n[!] Finish by hand for {account.primary_email}: {what} in the "
+            f"Chrome window.\n    Waiting up to {self.cfg.sams.captcha_wait_seconds}s "
+            "for you...\n"
+        )
+        deadline = time.monotonic() + self.cfg.sams.captcha_wait_seconds
+        while time.monotonic() < deadline:
+            if not self._first_visible(page, self.CODE_CANDIDATES, timeout_ms=1500):
+                return
+            time.sleep(2)
+
     def _process_ephemeral(self, account: Account) -> None:
         """Launch a throwaway browser per account (optionally via a proxy)."""
         launch_kwargs: dict = {

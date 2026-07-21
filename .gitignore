@@ -1,6 +1,7 @@
 # Real secrets & data — never commit these
 config.yaml
 accounts.csv
+resets.csv
 proxies.txt
 results.csv
 recorded_flow.py

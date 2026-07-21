@@ -116,6 +116,16 @@ activation:
   # page the flow lands on. (Ignored when verification.mode is "link".)
   url: ""
 
+reset:
+  # Used by:  python -m sams_automation reset  --resets resets.csv
+  # Runs the reset for each account in resets.csv (columns: email,new_password).
+  # The real path is: sign-in page -> enter email -> "Enter your password" ->
+  # "Forgot password?" -> "Try another way" -> "Email me a verification code" ->
+  # Send Code -> read the emailed code from the catch-all inbox -> new password.
+  # So this is the SIGN-IN page we start from (not a direct forgot-password URL).
+  forgot_url: "https://www.samsclub.com/login"
+  code_regex: '\b(\d{6})\b'
+
 # -----------------------------------------------------------------------------
 # Sam's Club page map.
 # The complimentary-membership form and its field names are CONFIRMED from a
@@ -200,6 +210,17 @@ sams:
     # phase 2; success_marker is the generic fallback. Empty = don't hard-fail.
     activation_success_marker: ""
     success_marker: ""
+
+    # --- Password reset flow (`reset` command; TODO: confirm on first run) ---
+    # All optional — empty falls back to matching the visible label / common
+    # one-time-code inputs / submit buttons, so it often works before tuning.
+    reset_email: ""              # the email field on the forgot-password page
+    reset_email_submit: ""       # the "Continue/Reset/Send" button after email
+    reset_code_input: ""         # where the emailed reset code is typed
+    reset_code_submit: ""        # the button after entering the code
+    reset_new_password: ""       # the new-password field
+    reset_new_password_confirm: ""  # the confirm-password field
+    reset_submit: ""             # the final "Save/Reset" button
 
   # CAPTCHA handling (headful only). Sam's uses PerimeterX "press and hold",
   # whose container is typically #px-captcha. When seen, the script pauses for

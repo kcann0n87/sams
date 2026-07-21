@@ -16,9 +16,9 @@ import argparse
 import sys
 from datetime import datetime, timedelta, timezone
 
-from .config import load_accounts, load_config
+from .config import load_accounts, load_config, load_reset_accounts
 from .imap_client import ImapClient, VerificationTimeout
-from .runner import run
+from .runner import run, run_reset
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -33,6 +33,15 @@ def _cmd_run(args: argparse.Namespace) -> int:
         only=args.only,
         resume=not args.no_resume,
     )
+    return 0
+
+
+def _cmd_reset(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    if args.headless:
+        cfg.browser.headless = True
+    resets = load_reset_accounts(args.resets)
+    run_reset(cfg, resets, limit=args.limit, only=args.only)
     return 0
 
 
@@ -216,6 +225,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     c = sub.add_parser("check", parents=[common], help="Validate config + accounts.")
     c.set_defaults(func=_cmd_check)
+
+    rs = sub.add_parser(
+        "reset",
+        parents=[common],
+        help="Reset passwords for a list of accounts (resets.csv: email,new_password).",
+    )
+    rs.add_argument("--resets", default="resets.csv",
+                    help="CSV of email,new_password (default resets.csv).")
+    rs.add_argument("--limit", type=int, default=None, help="Only process first N.")
+    rs.add_argument("--only", default=None, help="Process only this email.")
+    rs.add_argument("--headless", action="store_true", help="Force headless browser.")
+    rs.set_defaults(func=_cmd_reset)
 
     s = sub.add_parser(
         "serve", parents=[common], help="Open the local web UI in your browser."

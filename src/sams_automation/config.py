@@ -99,6 +99,16 @@ class ProxyConfig:
 
 
 @dataclass
+class ResetConfig:
+    """Password-reset mode: request a code by email, then set a new password."""
+
+    # Sam's "forgot password" page.
+    forgot_url: str
+    # Regex for the numeric reset code in the email.
+    code_regex: str
+
+
+@dataclass
 class Config:
     imap: ImapConfig
     verification: VerificationConfig
@@ -107,6 +117,7 @@ class Config:
     sams: SamsConfig
     proxies: ProxyConfig
     activation: ActivationConfig
+    reset: ResetConfig
 
 
 @dataclass
@@ -175,6 +186,7 @@ def load_config(path: str | Path) -> Config:
     sams = section("sams")
     proxies = raw.get("proxies") or {}
     activation = raw.get("activation") or {}
+    reset = raw.get("reset") or {}
 
     cfg = Config(
         imap=ImapConfig(
@@ -230,6 +242,10 @@ def load_config(path: str | Path) -> Config:
         activation=ActivationConfig(
             new_session=bool(activation.get("new_session", True)),
             url=activation.get("url", "") or "",
+        ),
+        reset=ResetConfig(
+            forgot_url=reset.get("forgot_url", "https://www.samsclub.com/login"),
+            code_regex=reset.get("code_regex", r"\b(\d{6})\b"),
         ),
     )
 
@@ -296,3 +312,49 @@ def load_accounts(path: str | Path) -> list[Account]:
                 )
             )
     return accounts
+
+
+@dataclass
+class ResetAccount:
+    """One account to run a password reset on."""
+
+    email: str
+    new_password: str
+
+    @property
+    def label(self) -> str:
+        return self.email
+
+
+RESET_COLUMNS = ["email", "new_password"]
+
+
+def load_reset_accounts(path: str | Path) -> list["ResetAccount"]:
+    """Load the password-reset list: columns email, new_password."""
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Reset list not found: {path}. Copy resets.example.csv to {path} "
+            "and fill in email,new_password for each family account."
+        )
+    rows: list[ResetAccount] = []
+    with path.open(newline="", encoding="utf-8-sig") as fh:
+        reader = csv.DictReader(fh)
+        if reader.fieldnames is None:
+            raise ValueError(f"{path} has no header row.")
+        missing = [c for c in RESET_COLUMNS if c not in reader.fieldnames]
+        if missing:
+            raise ValueError(
+                f"{path} is missing required column(s): {', '.join(missing)}"
+            )
+        for i, row in enumerate(reader, start=2):
+            row = {k: (v or "").strip() for k, v in row.items() if k is not None}
+            for col in RESET_COLUMNS:
+                if not row.get(col):
+                    raise ValueError(
+                        f"{path} row {i}: required column '{col}' is empty."
+                    )
+            rows.append(
+                ResetAccount(email=row["email"], new_password=row["new_password"])
+            )
+    return rows

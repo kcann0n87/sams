@@ -10,7 +10,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from .config import Account, Config
+from .config import Account, Config, ResetAccount
 from .imap_client import ImapClient, VerificationTimeout
 from .proxies import ProxyPool, load_proxies
 from .sams_flow import FlowError, SamsFlow
@@ -189,3 +189,87 @@ def self_pace(cfg: Config) -> None:
     wait = random.uniform(lo, hi)
     print(f"    ...waiting {wait:.0f}s before next account")
     time.sleep(wait)
+
+
+def _reset_as_account(ra: ResetAccount) -> Account:
+    """Lightweight Account stand-in so the reset flow reuses the same helpers.
+
+    primary_email = the account to reset; primary_password = the new password.
+    """
+    return Account(
+        primary_email=ra.email,
+        primary_password=ra.new_password,
+        secondary_first="reset",
+        secondary_last="reset",
+        secondary_email=ra.email,
+    )
+
+
+def run_reset(
+    cfg: Config,
+    resets: list[ResetAccount],
+    *,
+    limit: int | None = None,
+    only: str | None = None,
+) -> None:
+    """Reset each account's password: request an emailed code, set new password."""
+    queue = resets
+    if only:
+        queue = [r for r in queue if only == r.email]
+    if limit is not None:
+        queue = queue[:limit]
+    if not queue:
+        print("Nothing to do. (Filters matched nothing.)")
+        return
+
+    print(f"Resetting {len(queue)} password(s).\n")
+    shared_mode = bool(cfg.browser.user_data_dir)
+
+    imap = ImapClient(cfg.imap)
+    imap.connect()
+    ok = fail = 0
+    try:
+        with sync_playwright() as pw:
+            shared_context = None
+            if shared_mode:
+                channel = cfg.browser.channel or None
+                print(
+                    f"Launching real Chrome (channel={channel or 'chromium'}) with "
+                    f"profile '{cfg.browser.user_data_dir}'.\n"
+                )
+                shared_context = pw.chromium.launch_persistent_context(
+                    cfg.browser.user_data_dir,
+                    headless=cfg.browser.headless,
+                    slow_mo=cfg.browser.slow_mo_ms,
+                    channel=channel,
+                )
+                shared_context.set_default_timeout(cfg.browser.timeout_ms)
+                if cfg.browser.stealth:
+                    shared_context.add_init_script(STEALTH_INIT_JS)
+
+            flow = SamsFlow(cfg, pw, imap, None, shared_context=shared_context)
+            try:
+                for i, ra in enumerate(queue):
+                    print(f"[{i + 1}/{len(queue)}] {ra.email}")
+                    try:
+                        flow.process_reset(_reset_as_account(ra))
+                        ok += 1
+                        print("    -> ok")
+                    except VerificationTimeout as e:
+                        fail += 1
+                        print(f"    -> no reset code: {e}")
+                    except FlowError as e:
+                        fail += 1
+                        print(f"    -> flow error: {e}")
+                    except Exception as e:
+                        fail += 1
+                        print(f"    -> unexpected error: {type(e).__name__}: {e}")
+                    if i < len(queue) - 1:
+                        self_pace(cfg)
+            finally:
+                if shared_context is not None:
+                    shared_context.close()
+    finally:
+        imap.close()
+
+    print(f"\nDone. ok={ok} failed={fail}. See screenshots/.")
