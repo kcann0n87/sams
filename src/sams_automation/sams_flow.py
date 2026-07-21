@@ -648,14 +648,32 @@ class SamsFlow:
             raise FlowError(f"Could not find a field labeled '{label}'.")
         return False
 
+    def _try_click(self, target, selector: str | None = None) -> bool:
+        """Click with a bounded timeout, then force-click if it won't land.
+
+        Sam's has sticky overlays (e.g. the Feedback tab) that intercept normal
+        clicks, which makes Playwright scroll-retry for its full timeout without
+        ever clicking. A short timeout plus a force fallback fixes that.
+        """
+        for force in (False, True):
+            try:
+                if selector is not None:
+                    target.click(selector, timeout=5000, force=force)
+                else:
+                    target.click(timeout=5000, force=force)
+                return True
+            except Exception:
+                continue
+        return False
+
     def _click_role_button(self, page: Page, name: str) -> bool:
         """Click a button by its visible name, across the page and its frames."""
         for scope in self._scopes(page):
             try:
                 loc = scope.get_by_role("button", name=name, exact=False)
                 if loc.count() and loc.first.is_visible():
-                    loc.first.click()
-                    return True
+                    if self._try_click(loc.first):
+                        return True
             except Exception:
                 continue
         return False
@@ -667,12 +685,10 @@ class SamsFlow:
                 continue
             try:
                 scope.wait_for_selector(sel, timeout=2500, state="visible")
-                scope.click(sel)
-                return True
-            except PWTimeout:
-                continue
             except Exception:
                 continue
+            if self._try_click(scope, sel):
+                return True
         return False
 
     def _click_first_any(self, page: Page, selectors: list) -> bool:
@@ -683,12 +699,10 @@ class SamsFlow:
             for scope in self._scopes(page):
                 try:
                     scope.wait_for_selector(sel, timeout=1200, state="visible")
-                    scope.click(sel)
-                    return True
-                except PWTimeout:
-                    continue
                 except Exception:
                     continue
+                if self._try_click(scope, sel):
+                    return True
         return False
 
     def _click_first(self, page: Page, selectors: list) -> None:
