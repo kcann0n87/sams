@@ -33,6 +33,8 @@ def test_example_config_loads():
     # activation (phase 2) section
     assert c.activation.new_session is True
     assert c.activation.url == ""
+    # login method (main-account sign-in)
+    assert c.sams.login_method in ("password", "email_code")
     # secondary-side selectors are present (empty placeholders are fine)
     for key in ("activate_code_input", "activate_submit", "create_password",
                 "activation_success_marker"):

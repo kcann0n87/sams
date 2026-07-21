@@ -129,6 +129,14 @@ sams:
   add_member_url: "https://www.samsclub.com/account/manage-memberships/complimentary-membership"
   logout_url: "https://www.samsclub.com/logout"   # used to switch accounts in a shared profile
 
+  # How to sign in the MAIN account:
+  #   password    -> pick "Enter your password" and use the primary_password column.
+  #   email_code  -> pick "Email me a verification code"; the code arrives in the
+  #                  same catch-all inbox we already read, so NO password is needed.
+  #                  Use this if your accounts don't have passwords set.
+  login_method: "password"
+  login_code_regex: '\b(\d{6})\b'   # the numeric login code (email_code mode)
+
   selectors:
     # --- Login page (TODO: confirm against the real sign-in page) ---
     # type-based selectors are more robust than name-based on Sam's login.
@@ -136,10 +144,13 @@ sams:
     login_password: "input[type='password']"
     login_submit: "button[type='submit']"
     # After the email, Sam's shows a "choose a sign-in method" page (text code /
-    # email code / enter your password). We pick this option to reveal the
-    # password field. Defaults to matching the text "Enter your password" if left
-    # empty; override if the wording differs.
+    # email code / enter your password). These match the option to pick. Defaults
+    # to the visible text if left empty; override if the wording differs.
     login_password_option: "text=Enter your password"
+    login_email_code_option: "text=Email me a verification code"
+    # The field the emailed login code is typed into (email_code mode). Empty =
+    # fall back to common one-time-code inputs.
+    login_code_input: ""
     # Element that only exists once logged in. Empty = skip the check (safe for
     # the first watched run; we'll add the real one so login failures are caught).
     logged_in_marker: ""

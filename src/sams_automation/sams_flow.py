@@ -23,7 +23,7 @@ from playwright.sync_api import (
     TimeoutError as PWTimeout,
 )
 
-from .config import Account, Config
+from .config import Account, Config, VerificationConfig
 from .imap_client import ImapClient
 from .proxies import ProxyPool
 from .stealth import STEALTH_INIT_JS
@@ -340,18 +340,26 @@ class SamsFlow:
             )
 
         scope.fill(found, account.primary_email)
+        submit_sels = [self._resolve("login_submit"), "button[type='submit']"]
+        # Sam's is iframe-heavy, so a bare button[type=submit] can click the wrong
+        # thing. Target the real buttons by their visible label first.
+        continue_sels = ['button:has-text("Continue")', *submit_sels]
+        signin_sels = ['button:has-text("Sign In")', *submit_sels]
+
+        # Log in with an emailed code instead of a password (works for accounts
+        # with no password; the code lands in the inbox we already read).
+        if self.cfg.sams.login_method == "email_code":
+            self._login_with_email_code(page, account, scope, continue_sels)
+            self._shot(page, account, "logged-in")
+            return
+
         # Getting to the password field can take up to three shapes on Sam's:
         #   (a) it's already on this page/frame,
         #   (b) it appears after a 'Continue' click past the email step,
         #   (c) Sam's shows a "choose a sign-in method" page and you must pick
         #       "Enter your password" before the field is revealed.
-        submit_sels = [self._resolve("login_submit"), "button[type='submit']"]
         # Match the "Enter your password" option; overridable in config.
         pw_option = self._resolve("login_password_option") or "text=Enter your password"
-        # Sam's is iframe-heavy, so a bare button[type=submit] can click the wrong
-        # thing. Target the real buttons by their visible label first.
-        continue_sels = ['button:has-text("Continue")', *submit_sels]
-        signin_sels = ['button:has-text("Sign In")', *submit_sels]
 
         pwd_scope, pwd = self._find_visible(page, self.PASSWORD_CANDIDATES, timeout_ms=3000)
         if not pwd:  # (b) advance past the email step
@@ -424,6 +432,73 @@ class SamsFlow:
                 "didn't complete — still on the sign-in form. The Sign In button "
                 "may need a different selector (see the captured page)."
             )
+
+    # Candidate selectors for a one-time-code entry field.
+    CODE_CANDIDATES = [
+        "input[autocomplete='one-time-code']",
+        "input[inputmode='numeric']",
+        "input[name='code']",
+        "input[name='otp']",
+        "input[type='tel']",
+    ]
+
+    def _login_with_email_code(self, page: Page, account: Account, scope,
+                               continue_sels: list) -> None:
+        """Sign in via "Email me a verification code" — no password needed.
+
+        Picks the email-code option on Sam's "choose a sign-in method" page,
+        sends the code, reads it from the catch-all inbox (addressed to this
+        primary login email), and enters it.
+        """
+        option = self._resolve("login_email_code_option") or \
+            "text=Email me a verification code"
+        # Advance from the email step to the choose-method page if needed.
+        if not self._first_visible(page, [option], timeout_ms=3000):
+            if not self._click_in_scope(scope, continue_sels):
+                self._click_first_any(page, continue_sels)
+            self._maybe_captcha(page, account)
+        if not self._first_visible(page, [option], timeout_ms=self.cfg.browser.timeout_ms):
+            self._dump(page, "NOTFOUND-email-code-option")
+            raise FlowError(
+                "Couldn't find the 'Email me a verification code' option on the "
+                "sign-in page. Set sams.selectors.login_email_code_option."
+            )
+        self._click_first_any(page, [option])
+        trigger = datetime.now(timezone.utc)
+        # Send the code.
+        self._click_first_any(page, [
+            'button:has-text("Send Code")', 'button:has-text("Send code")',
+            'button:has-text("Continue")', *continue_sels,
+        ])
+        self._maybe_captcha(page, account)
+        self._shot(page, account, "login-code-requested")
+
+        # Read the login code from the inbox (sent to this primary login email).
+        ver = VerificationConfig(
+            mode="code",
+            code_regex=self.cfg.sams.login_code_regex or r"\b(\d{6})\b",
+            link_regex="",
+        )
+        result = self.imap.wait_for_verification(
+            to_address=account.primary_email, since=trigger, verification=ver
+        )
+        if not result.code:
+            raise FlowError(f"No login code email arrived for {account.primary_email}.")
+        print(f"    login code: {result.code}")
+
+        code_cands = [self._resolve("login_code_input"), *self.CODE_CANDIDATES]
+        cscope, csel = self._find_visible(page, code_cands,
+                                          timeout_ms=self.cfg.browser.timeout_ms)
+        if not csel:
+            self._dump(page, "NOTFOUND-login-code-input")
+            raise FlowError("Couldn't find the login code entry field.")
+        cscope.fill(csel, result.code)
+        self._shot(page, account, "login-code-entered")
+        self._click_first_any(page, [
+            'button:has-text("Sign In")', 'button:has-text("Verify")',
+            'button:has-text("Continue")', *continue_sels,
+        ])
+        self._maybe_captcha(page, account)
 
     def _ensure_logged_out(self, page: Page, account: Account) -> None:
         """Guarantee a clean, signed-out login page before signing in.

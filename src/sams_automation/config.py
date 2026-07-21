@@ -62,6 +62,14 @@ class SamsConfig:
     selectors: dict[str, str]
     captcha_marker: str
     captcha_wait_seconds: int
+    # How to sign in the MAIN account:
+    #   "password"   -> pick "Enter your password" and use primary_password.
+    #   "email_code" -> pick "Email me a verification code"; the code lands in the
+    #                   same catch-all inbox we already read, so no password is
+    #                   needed (works for accounts that have no password set).
+    login_method: str = "password"
+    # Regex for the numeric login code email (used when login_method=email_code).
+    login_code_regex: str = r"\b(\d{6})\b"
 
 
 @dataclass
@@ -211,6 +219,8 @@ def load_config(path: str | Path) -> Config:
             selectors=sams.get("selectors", {}),
             captcha_marker=sams.get("captcha_marker", ""),
             captcha_wait_seconds=int(sams.get("captcha_wait_seconds", 300)),
+            login_method=sams.get("login_method", "password") or "password",
+            login_code_regex=sams.get("login_code_regex", r"\b(\d{6})\b"),
         ),
         proxies=ProxyConfig(
             enabled=bool(proxies.get("enabled", False)),
@@ -226,6 +236,11 @@ def load_config(path: str | Path) -> Config:
     if cfg.verification.mode not in ("code", "link"):
         raise ValueError(
             f"verification.mode must be 'code' or 'link', got '{cfg.verification.mode}'"
+        )
+    if cfg.sams.login_method not in ("password", "email_code"):
+        raise ValueError(
+            "sams.login_method must be 'password' or 'email_code', got "
+            f"'{cfg.sams.login_method}'"
         )
     if cfg.proxies.rotation not in ("sticky", "round_robin", "random"):
         raise ValueError(
