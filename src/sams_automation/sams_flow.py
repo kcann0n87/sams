@@ -473,75 +473,85 @@ class SamsFlow:
         self._maybe_captcha(page, account)
         self._shot(page, account, "login-code-requested")
 
-        # Try to read the login code from the inbox (sent to this primary email).
+        # Now poll for BOTH "the code arrived" and "we're already signed in", so
+        # the moment login completes — whether the tool typed the code or you did
+        # it by hand — we move on. Look back 90s to tolerate email clock skew.
         ver = VerificationConfig(
             mode="code",
             code_regex=self.cfg.sams.login_code_regex or r"\b(\d{6})\b",
             link_regex="",
         )
-        # Look back a bit before the click: the code email can be timestamped a
-        # few seconds early (server clock skew), which would otherwise skip it.
         since = trigger - timedelta(seconds=90)
-        code = None
-        try:
-            result = self.imap.wait_for_verification(
-                to_address=account.primary_email, since=since, verification=ver
-            )
-            code = result.code
-        except VerificationTimeout:
-            code = None
-
-        # Auto-fill the code if we both read it AND can find the box.
-        if code:
-            print(f"    login code: {code}")
-            code_cands = [self._resolve("login_code_input"), *self.CODE_CANDIDATES]
-            cscope, csel = self._find_visible(page, code_cands, timeout_ms=8000)
-            if csel:
-                cscope.fill(csel, code)
-                self._shot(page, account, "login-code-entered")
-                self._click_first_any(page, [
-                    'button:has-text("Sign In")', 'button:has-text("Verify")',
-                    'button:has-text("Continue")', *continue_sels,
-                ])
-                self._maybe_captcha(page, account)
-                self._await_login_complete(page, account)
-                return
-
-        # Fallback: let the human finish the code entry in the browser window.
-        hint = (
-            f"the login code Sam's just emailed (it's {code})" if code
-            else "the login code Sam's just sent (check your email or phone)"
-        )
-        print(
-            f"\n[!] Finish sign-in by hand for {account.primary_email}:\n"
-            f"    Type {hint} into the Chrome window and click Sign In.\n"
-            f"    Waiting up to {self.cfg.sams.captcha_wait_seconds}s for you...\n"
-        )
-        self._await_login_complete(page, account)
-
-    def _await_login_complete(self, page: Page, account: Account) -> None:
-        """Block until we've navigated off the sign-in page (login completed).
-
-        Uses the URL leaving /login rather than the absence of input fields —
-        Sam's home page has a newsletter email box that would otherwise look
-        like we're still on the sign-in screen.
-        """
         deadline = time.monotonic() + self.cfg.sams.captcha_wait_seconds
+        start = time.monotonic()
+        seen: set[str] = set()
+        entered = False
+        hinted = False
         while time.monotonic() < deadline:
-            try:
-                url = (page.url or "").lower()
-            except Exception:
-                url = ""
-            if url and "login" not in url and "signin" not in url and "sign-in" not in url:
+            if self._is_signed_in(page):
                 print("[+] Signed in, continuing.")
                 page.wait_for_timeout(1500)
                 return
-            time.sleep(2)
+            if not entered:
+                code = None
+                try:
+                    hits = self.imap.scan_recent(
+                        since=since, verification=ver,
+                        to_filter=account.primary_email, skip_uids=seen,
+                    )
+                    code = next((h.code for h in hits if h.code), None)
+                except Exception:
+                    code = None
+                if code:
+                    print(f"    login code: {code}")
+                    code_cands = [self._resolve("login_code_input"),
+                                  *self.CODE_CANDIDATES]
+                    cscope, csel = self._find_visible(page, code_cands, timeout_ms=8000)
+                    if csel:
+                        cscope.fill(csel, code)
+                        self._shot(page, account, "login-code-entered")
+                        self._click_first_any(page, [
+                            'button:has-text("Sign In")', 'button:has-text("Verify")',
+                            'button:has-text("Continue")', *continue_sels,
+                        ])
+                        self._maybe_captcha(page, account)
+                        entered = True
+                        continue
+                    if not hinted:  # read it but can't find the box
+                        print(
+                            f"\n[!] Read login code {code} but couldn't find the box "
+                            "— type it into the Chrome window and click Sign In.\n"
+                        )
+                        hinted = True
+            # No code yet after a bit: invite manual entry (harmless if unused).
+            if not entered and not hinted and (time.monotonic() - start) > 45:
+                print(
+                    f"\n[!] Still fetching the login code for {account.primary_email}. "
+                    "If you have it (email/phone), type it into the Chrome window and "
+                    "click Sign In — I'll continue automatically.\n"
+                )
+                hinted = True
+            time.sleep(3)
+
         self._dump(page, "login-not-complete")
         raise FlowError(
             f"Sign-in for {account.primary_email} didn't complete in time "
             "(still on the sign-in page)."
         )
+
+    def _is_signed_in(self, page: Page) -> bool:
+        """True once we've navigated off the sign-in page.
+
+        Uses the URL leaving /login rather than the absence of input fields —
+        Sam's home page has a newsletter email box that would otherwise look
+        like we're still on the sign-in screen.
+        """
+        try:
+            url = (page.url or "").lower()
+        except Exception:
+            return False
+        return bool(url) and "login" not in url and "signin" not in url \
+            and "sign-in" not in url
 
     def _ensure_logged_out(self, page: Page, account: Account) -> None:
         """Guarantee a clean, signed-out login page before signing in.
