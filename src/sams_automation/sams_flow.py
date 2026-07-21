@@ -24,7 +24,7 @@ from playwright.sync_api import (
 )
 
 from .config import Account, Config, VerificationConfig
-from .imap_client import ImapClient
+from .imap_client import ImapClient, VerificationTimeout
 from .proxies import ProxyPool
 from .stealth import STEALTH_INIT_JS
 
@@ -473,32 +473,61 @@ class SamsFlow:
         self._maybe_captcha(page, account)
         self._shot(page, account, "login-code-requested")
 
-        # Read the login code from the inbox (sent to this primary login email).
+        # Try to read the login code from the inbox (sent to this primary email).
         ver = VerificationConfig(
             mode="code",
             code_regex=self.cfg.sams.login_code_regex or r"\b(\d{6})\b",
             link_regex="",
         )
-        result = self.imap.wait_for_verification(
-            to_address=account.primary_email, since=trigger, verification=ver
-        )
-        if not result.code:
-            raise FlowError(f"No login code email arrived for {account.primary_email}.")
-        print(f"    login code: {result.code}")
+        code = None
+        try:
+            result = self.imap.wait_for_verification(
+                to_address=account.primary_email, since=trigger, verification=ver
+            )
+            code = result.code
+        except VerificationTimeout:
+            code = None
 
-        code_cands = [self._resolve("login_code_input"), *self.CODE_CANDIDATES]
-        cscope, csel = self._find_visible(page, code_cands,
-                                          timeout_ms=self.cfg.browser.timeout_ms)
-        if not csel:
-            self._dump(page, "NOTFOUND-login-code-input")
-            raise FlowError("Couldn't find the login code entry field.")
-        cscope.fill(csel, result.code)
-        self._shot(page, account, "login-code-entered")
-        self._click_first_any(page, [
-            'button:has-text("Sign In")', 'button:has-text("Verify")',
-            'button:has-text("Continue")', *continue_sels,
-        ])
-        self._maybe_captcha(page, account)
+        # Auto-fill the code if we both read it AND can find the box.
+        if code:
+            print(f"    login code: {code}")
+            code_cands = [self._resolve("login_code_input"), *self.CODE_CANDIDATES]
+            cscope, csel = self._find_visible(page, code_cands, timeout_ms=8000)
+            if csel:
+                cscope.fill(csel, code)
+                self._shot(page, account, "login-code-entered")
+                self._click_first_any(page, [
+                    'button:has-text("Sign In")', 'button:has-text("Verify")',
+                    'button:has-text("Continue")', *continue_sels,
+                ])
+                self._maybe_captcha(page, account)
+                return
+
+        # Fallback: let the human finish the code entry in the browser window.
+        hint = (
+            f"the login code Sam's just emailed (it's {code})" if code
+            else "the login code Sam's just sent (check your email or phone)"
+        )
+        print(
+            f"\n[!] Finish sign-in by hand for {account.primary_email}:\n"
+            f"    Type {hint} into the Chrome window and click Sign In.\n"
+            f"    Waiting up to {self.cfg.sams.captcha_wait_seconds}s for you...\n"
+        )
+        self._wait_until_login_left(page, account)
+
+    def _wait_until_login_left(self, page: Page, account: Account) -> None:
+        """Block until the sign-in/code form is gone (login completed)."""
+        fields = self.EMAIL_CANDIDATES + self.PASSWORD_CANDIDATES + self.CODE_CANDIDATES
+        deadline = time.monotonic() + self.cfg.sams.captcha_wait_seconds
+        while time.monotonic() < deadline:
+            if not self._first_visible(page, fields, timeout_ms=1500):
+                print("[+] Signed in, continuing.")
+                return
+            time.sleep(2)
+        self._dump(page, "login-manual-timeout")
+        raise FlowError(
+            f"Sign-in for {account.primary_email} wasn't completed in time."
+        )
 
     def _ensure_logged_out(self, page: Page, account: Account) -> None:
         """Guarantee a clean, signed-out login page before signing in.
