@@ -23,7 +23,15 @@ from pathlib import Path
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from .config import TEMPLATE_COLUMNS, Account, load_accounts, load_config
+from .config import (
+    RESET_COLUMNS,
+    TEMPLATE_COLUMNS,
+    Account,
+    ResetAccount,
+    load_accounts,
+    load_config,
+    load_reset_accounts,
+)
 
 # Cap uploads so a stray huge file can't exhaust memory. An account list is tiny.
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024  # 2 MB
@@ -45,6 +53,14 @@ def _preview_rows(accounts: list[Account]) -> list[dict[str, str]]:
             }
         )
     return rows
+
+
+def _reset_preview_rows(resets: list[ResetAccount]) -> list[dict[str, str]]:
+    """Reset list -> rows safe to show (new passwords masked)."""
+    return [
+        {"email": r.email, "new_password": "••••••" if r.new_password else "—"}
+        for r in resets
+    ]
 
 
 class Job:
@@ -190,6 +206,29 @@ INDEX_HTML = """<!doctype html>
     </div>
   </div>
 
+  <div class="card">
+    <h2>Password resets (CSV)</h2>
+    <p class="note">A separate list to <b>reset passwords</b> on family accounts.
+      Two columns — <b>email</b> and the <b>new_password</b> you want it set to.
+      For each one it runs Sam's forgot-password flow (emails a code, reads it,
+      sets the new password).
+      <a href="/api/resets-template.csv" download>Download a blank template ↓</a></p>
+    <div class="drop" id="dropr" onclick="document.getElementById('filer').click()">
+      <input id="filer" type="file" accept=".csv,text/csv" style="display:none"
+             onchange="if(this.files[0])uploadResets(this.files[0])">
+      <div><b>Choose a CSV</b> or drag &amp; drop it here</div>
+      <div class="note" style="margin-top:6px">Passwords stay on this machine.</div>
+    </div>
+    <p class="msg" id="upmsgr"></p>
+    <div class="tablewrap" id="resetpreviewwrap" style="display:none">
+      <table class="preview" id="resetpreview"></table>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" onclick="post('/api/reset-run?limit=1')" id="b-reset1">Reset 1 account (test)</button>
+      <button class="primary" onclick="if(confirm('Reset ALL passwords in the list?'))post('/api/reset-run')" id="b-resetall">Reset all passwords</button>
+    </div>
+  </div>
+
   <div class="card" id="pwcard">
     <h2>iCloud app password</h2>
     <p class="note">Paste the <b>app-specific password</b> from appleid.apple.com
@@ -295,13 +334,46 @@ const drop = document.getElementById('drop');
 drop.addEventListener('drop', e => {
   const f = e.dataTransfer.files[0]; if(f) uploadFile(f); });
 
+function renderResetPreview(data){
+  const wrap = document.getElementById('resetpreviewwrap');
+  const t = document.getElementById('resetpreview');
+  if(!data.rows || !data.rows.length){ wrap.style.display='none'; t.innerHTML=''; return; }
+  const cols = data.columns || Object.keys(data.rows[0]);
+  let html = '<thead><tr>' + cols.map(c => '<th>'+escapeHtml(c)+'</th>').join('') + '</tr></thead><tbody>';
+  html += data.rows.map(r => '<tr>' + cols.map(c => '<td>'+escapeHtml(r[c] ?? '')+'</td>').join('') + '</tr>').join('');
+  html += '</tbody>';
+  t.innerHTML = html; wrap.style.display = 'block';
+}
+async function loadResets(){
+  const d = await jget('/api/resets');
+  if(d.ok) renderResetPreview(d);
+}
+async function uploadResets(file){
+  const msg = document.getElementById('upmsgr');
+  msg.className = 'msg'; msg.textContent = 'Checking '+file.name+' …';
+  const fd = new FormData(); fd.append('file', file);
+  let j;
+  try { const r = await fetch('/api/upload-resets',{method:'POST',body:fd}); j = await r.json(); }
+  catch(e){ msg.className='msg err'; msg.textContent='Upload failed: '+e; return; }
+  if(!j.ok){ msg.className='msg err'; msg.textContent='✗ '+j.error; return; }
+  msg.className='msg ok'; msg.textContent='✓ Loaded '+j.count+' account(s) to reset.';
+  renderResetPreview(j);
+}
+const dropr = document.getElementById('dropr');
+['dragenter','dragover'].forEach(ev => dropr.addEventListener(ev, e => {
+  e.preventDefault(); dropr.classList.add('over'); }));
+['dragleave','drop'].forEach(ev => dropr.addEventListener(ev, e => {
+  e.preventDefault(); dropr.classList.remove('over'); }));
+dropr.addEventListener('drop', e => {
+  const f = e.dataTransfer.files[0]; if(f) uploadResets(f); });
+
 let lastLen = 0;
 async function tick(){
   const s = await jget('/api/status');
   const pill = document.getElementById('statuspill');
   pill.textContent = s.running ? ('running: '+s.kind) : 'idle';
   pill.className = 'pill ' + (s.running ? 'run':'idle');
-  for (const b of ['b-imap','b-run1','b-runall']) document.getElementById(b).disabled = s.running;
+  for (const b of ['b-imap','b-run1','b-runall','b-reset1','b-resetall']) document.getElementById(b).disabled = s.running;
   document.getElementById('b-stop').disabled = !s.running;
   const log = document.getElementById('log');
   log.textContent = s.lines.join('\\n');
@@ -340,6 +412,7 @@ async function renderResults(){
 }
 loadInfo();
 loadAccounts();
+loadResets();
 tick();
 setInterval(tick, 1500);
 </script>
@@ -419,6 +492,15 @@ def create_app(config_path: str, accounts_path: str) -> Flask:
         if limit:
             args += ["--limit", str(int(limit))]
         ok = job.start("run", _py_cli(*args), root)
+        return jsonify(started=ok)
+
+    @app.post("/api/reset-run")
+    def api_reset_run():
+        args = ["reset", "--resets", "resets.csv"]
+        limit = request.args.get("limit")
+        if limit:
+            args += ["--limit", str(int(limit))]
+        ok = job.start("reset", _py_cli(*args), root)
         return jsonify(started=ok)
 
     @app.post("/api/stop")
@@ -560,6 +642,71 @@ def create_app(config_path: str, accounts_path: str) -> Flask:
         except Exception as e:
             return jsonify(ok=False, error=str(e), rows=[])
         return jsonify(ok=True, rows=list(latest.values()))
+
+    # -- password-reset list: upload / preview / template ------------------
+
+    @app.get("/api/resets")
+    def api_resets():
+        try:
+            rs = load_reset_accounts("resets.csv")
+            return jsonify(ok=True, count=len(rs), columns=RESET_COLUMNS,
+                           rows=_reset_preview_rows(rs))
+        except FileNotFoundError:
+            return jsonify(ok=True, count=0, columns=RESET_COLUMNS, rows=[])
+        except Exception as e:
+            return jsonify(ok=False, error=str(e), rows=[])
+
+    @app.get("/api/resets-template.csv")
+    def api_resets_template():
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(RESET_COLUMNS)
+        w.writerow(["member1@example.com", "NewPassw0rd1!"])
+        return Response(
+            buf.getvalue(),
+            mimetype="text/csv",
+            headers={
+                "Content-Disposition": "attachment; filename=resets-template.csv"
+            },
+        )
+
+    @app.post("/api/upload-resets")
+    def api_upload_resets():
+        """Validate an uploaded reset list and make it the active resets.csv."""
+        f = request.files.get("file")
+        if f is None or not f.filename:
+            return jsonify(ok=False, error="No file was uploaded.")
+        raw = f.read(MAX_UPLOAD_BYTES + 1)
+        if len(raw) > MAX_UPLOAD_BYTES:
+            return jsonify(ok=False, error="File is too large (max 2 MB).")
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return jsonify(
+                ok=False, error="File isn't UTF-8 text. Export it as a plain CSV."
+            )
+        tmp = Path(tempfile.gettempdir()) / f"sams_resets_{id(raw)}.csv"
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            rs = load_reset_accounts(tmp)
+        except ValueError as e:
+            msg = str(e).replace(str(tmp), f"'{f.filename}'")
+            return jsonify(ok=False, error=msg)
+        except Exception as e:
+            return jsonify(ok=False, error=f"{type(e).__name__}: {e}")
+        finally:
+            tmp.unlink(missing_ok=True)
+        if not rs:
+            return jsonify(ok=False, error="The CSV has a header but no rows.")
+        dest = Path("resets.csv")
+        try:
+            if dest.exists():
+                dest.replace(dest.with_suffix(dest.suffix + ".bak"))
+            dest.write_text(text, encoding="utf-8")
+        except Exception as e:
+            return jsonify(ok=False, error=f"Couldn't save the list: {e}")
+        return jsonify(ok=True, count=len(rs), columns=RESET_COLUMNS,
+                       rows=_reset_preview_rows(rs))
 
     return app
 
