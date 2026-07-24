@@ -4,6 +4,18 @@ A single-file web app for logging your weekly PGA sports bets and tracking how
 you're actually doing — profit/loss, ROI, win rate, and charts, updated
 automatically as you enter bets.
 
+## Comes pre-loaded with your 2026 season
+
+The tracker opens already populated with your full betting history imported from
+your spreadsheet — 284 bets across 26 tournaments (Sony Open → ISCO
+Championship), split into separate **To Win** (outright) and **Top 5** entries
+per golfer so you can compare how each market performs. The imported totals
+reconcile exactly to your sheet: **net −$216.41**, ~$21,876 staked, 16 wins.
+
+This history loads once, the first time you open the app. After that your own
+edits and new bets take over — clearing all data won't bring the seed back. The
+raw import also lives in `history.json` if you ever want to re-import it.
+
 ## How to use it
 
 Just open `index.html` in any web browser (double-click it, or drag it into a
