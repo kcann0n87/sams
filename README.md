@@ -169,6 +169,10 @@ provider list, and how to add a site in config without writing code:
 — Gmail app password, accounts, proxies, provider keys, and the selector-tuning
 loop, in order.
 
+**What the pages actually contain: [docs/WALMART_PAGE_MAP.md](docs/WALMART_PAGE_MAP.md)**
+— every sign-in screen, which control does what, and the traps, recorded from
+real runs. Written to be usable by any tool, not just this one.
+
 
 Buys a verification number and adds it to each account in
 `walmart_accounts.csv`, logging in through that account's proxy.
