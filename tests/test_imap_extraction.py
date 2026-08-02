@@ -145,5 +145,47 @@ def _run_all():
     return 1 if failed else 0
 
 
+def test_a_plus_tag_in_the_address_is_not_mistaken_for_the_code():
+    """bjoey3739+668331@gmail.com carries six digits with word boundaries.
+
+    A bare \\b(\\d{6})\\b matched the address tag before it reached the code, so
+    Walmart rejected every attempt with a number that looked entirely
+    plausible.
+    """
+    import re
+
+    from sams_automation.imap_client import extract_code
+
+    code_re = re.compile(r"\b(\d{6})\b")
+    body = (
+        "Hi, we sent this to bjoey3739+668331@gmail.com.\n"
+        "Your verification code is 622767. It expires in 10 minutes."
+    )
+    assert extract_code(code_re, "Verify your account", body) == "622767"
+
+
+def test_the_code_beside_its_label_beats_other_six_digit_numbers():
+    import re
+
+    from sams_automation.imap_client import extract_code
+
+    code_re = re.compile(r"\b(\d{6})\b")
+    body = (
+        "Order 998877 shipped.\n"
+        "Your one-time passcode is 445566.\n"
+        "Reference 112233."
+    )
+    assert extract_code(code_re, "Walmart", body) == "445566"
+
+
+def test_the_subject_is_used_when_the_body_has_no_code():
+    import re
+
+    from sams_automation.imap_client import extract_code
+
+    code_re = re.compile(r"\b(\d{6})\b")
+    assert extract_code(code_re, "314159 is your verification code", "") == "314159"
+
+
 if __name__ == "__main__":
     raise SystemExit(_run_all())

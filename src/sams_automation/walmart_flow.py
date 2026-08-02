@@ -34,6 +34,10 @@ class WalmartConfig:
     # How long to let the code submission's redirect chain finish before
     # calling the sign-in failed.
     signin_wait_seconds: int = 45
+    # Hand sign-in to a human and wait, instead of driving it. Everything
+    # after sign-in still runs normally.
+    manual_login: bool = False
+    manual_login_seconds: int = 300
 
 
 @dataclass
@@ -618,6 +622,8 @@ class WalmartFlow:
         Returns "code" or "password" for the log.
         """
         self.page.goto(self.cfg.login_url)
+        if self.cfg.manual_login:
+            return self.wait_for_manual_login(account)
         self.wait_out_captcha()
         # Before touching anything. If the email field never appears, this pair
         # of files is the only record of what was actually on screen — the
@@ -750,6 +756,9 @@ class WalmartFlow:
                 "Check the credentials, or set walmart.selectors.logged_in_marker "
                 "if this is a false alarm"
             )
+        # "Make it easier to sign in" lands here, between the account and every
+        # page after it.
+        self.dismiss_interstitials()
         return method
 
     # Walmart runs sign-in on its own host, so being there afterwards means it
@@ -762,6 +771,63 @@ class WalmartFlow:
         except Exception:
             return False
         return any(m in url for m in self.SIGNED_OUT_MARKERS)
+
+    # Walmart shows a "Make it easier to sign in" page after sign-in, offering
+    # to text a code to a phone next time. It stands between the account and
+    # every page after it, and the way past is Not now — its phone field is
+    # for sign-in convenience, not the account's phone number.
+    DISMISS_WORDS = (
+        "not now", "no thanks", "maybe later", "remind me later", "skip",
+        "not right now",
+    )
+
+    def dismiss_interstitials(self, rounds: int = 3) -> None:
+        """Click past the "would you like to..." pages that follow sign-in."""
+        for _ in range(rounds):
+            target = None
+            for element in self._clickables():
+                text = self._option_text(element).lower()
+                if not text or len(text) > 30:
+                    continue
+                if any(w in text for w in self.DISMISS_WORDS):
+                    target = (element, text)
+                    break
+            if target is None:
+                return
+            element, text = target
+            try:
+                element.click()
+            except Exception:
+                return
+            print(f"    dismissed: {text!r}")
+            self.settle()
+
+    def wait_for_manual_login(self, account: WalmartAccount) -> str:
+        """Hand the browser over and wait for a human to sign in.
+
+        For when the automated sign-in is the thing being worked on and the
+        rest of the run is what you actually want to reach. Everything after
+        this — the phone form, the purchase, the code — still runs normally.
+        """
+        print(
+            f"\n  MANUAL SIGN-IN for {account.email}\n"
+            "  Sign in yourself in the browser window. The run continues the\n"
+            f"  moment you're through, and waits up to "
+            f"{self.cfg.manual_login_seconds}s.\n"
+        )
+        deadline = time.monotonic() + self.cfg.manual_login_seconds
+        while True:
+            if not self.signed_out():
+                print("    signed in — carrying on")
+                self.dismiss_interstitials()
+                self.dump("after-login")
+                return "manual"
+            if time.monotonic() >= deadline:
+                raise FlowError(
+                    "manual sign-in wasn't completed in "
+                    f"{self.cfg.manual_login_seconds}s"
+                )
+            time.sleep(2)
 
     def wait_signed_in(self) -> bool:
         """Poll until the browser leaves Walmart's identity host.
@@ -782,6 +848,7 @@ class WalmartFlow:
         self.page.goto(self.cfg.phone_url)
         self.settle()
         self.wait_out_captcha()
+        self.dismiss_interstitials()
         if self.signed_out():
             self.dump("phone-form")
             raise FlowError(
@@ -878,4 +945,6 @@ def load_walmart_config(raw: dict[str, Any] | None) -> WalmartConfig:
         captcha_marker=raw.get("captcha_marker", ""),
         captcha_wait_seconds=int(raw.get("captcha_wait_seconds", 300)),
         signin_wait_seconds=int(raw.get("signin_wait_seconds", 45)),
+        manual_login=bool(raw.get("manual_login", False)),
+        manual_login_seconds=int(raw.get("manual_login_seconds", 300)),
     )

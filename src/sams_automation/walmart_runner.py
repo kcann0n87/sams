@@ -328,6 +328,9 @@ def _read_signin_code(raw_walmart: dict[str, Any] | None, to_address: str) -> st
         raise RuntimeError(f"no sign-in code arrived: {e}") from None
     finally:
         client.close()
+    # Printed because a wrong code is otherwise only visible as Walmart saying
+    # the code is incorrect, which reads like a delivery problem.
+    print(f"    code {result.code} from {result.subject[:50]!r}")
     return result.code or ""
 
 

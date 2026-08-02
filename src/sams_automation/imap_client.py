@@ -114,8 +114,7 @@ class ImapClient:
                 code = None
                 link = None
                 if verification.mode == "code":
-                    m = code_re.search(body) or code_re.search(msg.get("Subject", ""))
-                    code = m.group(1) if m else None
+                    code = extract_code(code_re, msg.get("Subject", ""), body)
                 else:  # "link"
                     m = link_re.search(body)
                     link = m.group(1) if m else None
@@ -218,8 +217,7 @@ class ImapClient:
                 continue
 
             body = _message_text(msg)
-            m = code_re.search(body) or code_re.search(msg.get("Subject", ""))
-            code = m.group(1) if m else None
+            code = extract_code(code_re, msg.get("Subject", ""), body)
             m2 = link_re.search(body)
             link = m2.group(1) if m2 else None
 
@@ -285,6 +283,51 @@ def _primary_recipient(msg: Message) -> str:
         headers += [str(v) for v in msg.get_all(h, [])]
     addrs = [addr for _, addr in getaddresses(headers) if addr]
     return addrs[0] if addrs else ""
+
+
+# Text that contains digits but never the code. A catch-all address carries a
+# plus-tag — bjoey3739+668331@gmail.com — and "668331" is six digits with a
+# word boundary either side, so a bare \b(\d{6})\b matched the address instead
+# of the code and Walmart rejected every attempt.
+_EMAIL_ADDRESS_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
+_URL_RE = re.compile(r"https?://\S+")
+# Words the real code sits next to.
+_CODE_CONTEXT_RE = re.compile(
+    r"(verification code|security code|one[- ]time|passcode|\bcode\b)", re.I
+)
+
+
+def _without_addresses(text: str) -> str:
+    return _URL_RE.sub(" ", _EMAIL_ADDRESS_RE.sub(" ", text or ""))
+
+
+def extract_code(code_re: re.Pattern[str], subject: str, body: str) -> str | None:
+    """Pull the verification code out of an email.
+
+    Addresses and links go first, then a match near the words that introduce a
+    code wins over one anywhere else — an order number or a date in the footer
+    is just as much "six digits" as the code is.
+    """
+    # After the label first — "your code is 445566". Reaching backwards as far
+    # as forwards would sweep up an order number from the line above.
+    for text in (subject, body):
+        cleaned = _without_addresses(text)
+        for context in _CODE_CONTEXT_RE.finditer(cleaned):
+            found = code_re.search(cleaned[context.end(): context.end() + 60])
+            if found:
+                return found.group(1)
+    # Then just before it — "445566 is your verification code".
+    for text in (subject, body):
+        cleaned = _without_addresses(text)
+        for context in _CODE_CONTEXT_RE.finditer(cleaned):
+            found = code_re.search(cleaned[max(0, context.start() - 25): context.start()])
+            if found:
+                return found.group(1)
+    for text in (subject, body):
+        found = code_re.search(_without_addresses(text))
+        if found:
+            return found.group(1)
+    return None
 
 
 def _to_matches(msg: Message, to_address: str) -> bool:

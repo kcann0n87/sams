@@ -416,6 +416,12 @@ walmart:
   # flight, so this is how long to keep looking before giving up.
   signin_wait_seconds: 45
 
+  # Sign in by hand instead of driving it, then let the run carry on from the
+  # phone form. For working on the steps after sign-in without fighting the
+  # sign-in itself. The run waits for you to get through.
+  manual_login: false
+  manual_login_seconds: 300
+
   # Leave a failed account's browser window open this long before closing it.
   # The screenshots and HTML dumps survive either way, but the live page is
   # usually the quicker answer. 0 closes immediately.
