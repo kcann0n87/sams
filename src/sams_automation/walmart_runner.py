@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import random
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -76,13 +77,8 @@ def run_add_phone(
         f"Browser: {channel or 'chromium (Playwright build)'}"
         + (f", persistent profile at {profile_dir}" if profile_dir else ", fresh profile")
     )
-    if profile_dir and len(accounts) > 1:
-        # One profile can't hold several signed-in identities, and a shared
-        # profile also means a shared IP story across accounts.
-        print(
-            "  NOTE: a persistent profile is shared by every account in this run. "
-            "Use --limit 1, or leave user_data_dir unset for multi-account runs."
-        )
+    if profile_dir:
+        print(f"  one profile per account under {profile_dir}/")
 
     print("Checking provider stock once for the whole run ...")
     pairs, _ = _providers_with_stock(config_path)
@@ -151,8 +147,16 @@ def run_add_phone(
             # which is the same approach the Sam's Club flow takes. It's not a
             # bypass — the challenge still has to be solved, once.
             if profile_dir:
+                # One profile per account, not one shared by all of them. A
+                # shared profile carries the previous account's cookies into
+                # the next, and with a sticky IP per account it would pair one
+                # browser identity with several addresses — the same
+                # contradiction rotating proxies create.
+                safe = re.sub(r"[^A-Za-z0-9._-]", "_", account.email)
+                account_profile = str(Path(profile_dir) / safe)
+                Path(account_profile).mkdir(parents=True, exist_ok=True)
                 context = pw.chromium.launch_persistent_context(
-                    user_data_dir=profile_dir,
+                    user_data_dir=account_profile,
                     headless=headless,
                     channel=channel,
                     slow_mo=cfg.browser.slow_mo_ms,
