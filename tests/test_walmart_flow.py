@@ -446,6 +446,9 @@ class FakeElement:
     def __init__(self, page, text, attrs=None):
         self.page, self.text, self.attrs = page, text, attrs or {}
 
+    def is_visible(self):
+        return True
+
     def inner_text(self):
         return self.text
 
@@ -559,6 +562,9 @@ def test_a_radio_with_no_text_of_its_own_is_found_via_its_label():
     ticked = []
 
     class Radio:
+        def is_visible(self):
+            return True
+
         def inner_text(self):
             return ""
 

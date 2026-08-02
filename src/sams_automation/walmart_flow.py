@@ -157,18 +157,37 @@ class WalmartFlow:
     )
     # Choosing a method often only ticks the radio; the email is sent by a
     # separate press.
+    # Every one of these used to start with `button`, so a Continue built as a
+    # div with a role — which is how the rest of this screen is built — matched
+    # nothing and the code was never requested.
+    PROCEED_WORDS = ("continue", "send", "next", "verify", "get code")
     PROCEED_SELECTORS = (
-        "button:has-text('Continue')",
-        "button:has-text('Send')",
-        "button:has-text('Next')",
-        "button[type='submit']",
+        "button[type='submit']:visible",
+        "[data-automation-id*='continue' i]:visible",
+        "[data-testid*='continue' i]:visible",
+        "button:visible",
+        "[role=button]:visible",
     )
 
     def _clickables(self) -> list[Any]:
+        """Visible clickable elements only.
+
+        Without the filter the text search could match something in a collapsed
+        or off-screen panel, and clicking it does nothing useful — the page
+        re-renders and the run carries on as though the option was taken.
+        """
         try:
-            return self.page.locator(self.CLICKABLE_QUERY).all()[:200]
+            found = self.page.locator(self.CLICKABLE_QUERY).all()[:200]
         except Exception:
             return []
+        visible = []
+        for element in found:
+            try:
+                if element.is_visible():
+                    visible.append(element)
+            except Exception:
+                continue
+        return visible
 
     @staticmethod
     def _text_of(element: Any) -> str:
@@ -319,6 +338,25 @@ class WalmartFlow:
                         return item
                 except Exception:
                     continue
+        return None
+
+    def _find_proceed(self) -> Any | None:
+        """The control that actually sends the code.
+
+        A submit button or a continue-ish test id wins outright. Otherwise any
+        visible clickable whose wording says it proceeds — which is how this
+        screen builds it, as a div with a role rather than a button.
+        """
+        for selector in self.PROCEED_SELECTORS[:3]:
+            found = self._first_visible((selector,))
+            if found is not None and self._enabled(found):
+                return found
+        for element in self._clickables():
+            text = self._option_text(element).lower()
+            if not text or len(text) > 40:
+                continue          # a long label is the option, not the button
+            if any(w in text for w in self.PROCEED_WORDS) and self._enabled(element):
+                return element
         return None
 
     def enter_code(self, code: str) -> bool:
@@ -516,9 +554,13 @@ class WalmartFlow:
             # is sent by a separate press — without it the run waits out the
             # whole mailbox timeout for a message nobody sent.
             if self._url() == before:
-                proceed = self._first_visible(self.PROCEED_SELECTORS)
+                proceed = self._find_proceed()
                 if proceed is None:
-                    print("    nothing to press to send the code")
+                    print("    nothing to press to send the code. Visible controls:")
+                    for element in self._clickables()[:25]:
+                        label = self._option_text(element)
+                        if label:
+                            print(f"      {label[:90]!r}")
                 elif not self._enabled(proceed):
                     # Clicking a disabled button waits the full timeout and
                     # then blames the click. The real cause is upstream: the
