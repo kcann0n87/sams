@@ -134,15 +134,20 @@ Easiest way in is the local web UI — a form for all the API keys, a live
 availability table, and a watch mode that alerts you when a pool refills:
 
 ```bash
-python -m sams_automation serve     # then click "SMS providers" in the header
+./start.sh          # sets up its own Python env on first run, then opens the UI
 ```
+
+`start.sh` exists because macOS has no `python` (only `python3`) and refuses
+`pip install` outside a virtualenv, which makes the plain commands below fail in
+a confusing way on a fresh Mac. It installs only PyYAML and Flask — Playwright
+is not needed for the SMS side.
 
 Or from the terminal:
 
 ```bash
-python -m sams_automation sms-check --list-providers   # what's wired up
-python -m sams_automation sms-check                    # one-shot check
-python -m sams_automation sms-check --watch            # alert on restock
+./start.sh sms-check --list-providers   # what's wired up
+./start.sh sms-check                    # one-shot check
+./start.sh sms-check --watch            # alert on restock
 ```
 
 Keys are entered in the web UI (stored in git-ignored `sms_keys.json`), or come
