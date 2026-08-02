@@ -410,3 +410,13 @@ walmart:
   # for you to solve it by hand; it never attempts to solve it itself.
   captcha_marker: "#px-captcha"
   captcha_wait_seconds: 300
+
+  # Submitting the sign-in code starts an async check and a redirect chain.
+  # Reading the URL straight afterwards calls it a failure while it's still in
+  # flight, so this is how long to keep looking before giving up.
+  signin_wait_seconds: 45
+
+  # Leave a failed account's browser window open this long before closing it.
+  # The screenshots and HTML dumps survive either way, but the live page is
+  # usually the quicker answer. 0 closes immediately.
+  hold_open_on_error_seconds: 60

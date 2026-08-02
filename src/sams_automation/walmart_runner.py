@@ -81,6 +81,9 @@ def run_add_phone(
     if profile_dir:
         print(f"  one profile per account under {profile_dir}/{channel or 'chromium'}/")
 
+    # Seconds to leave a failed account's window open. 0 closes immediately.
+    hold_seconds = int((raw.get("walmart") or {}).get("hold_open_on_error_seconds", 60))
+
     print("Checking provider stock once for the whole run ...")
     pairs, _ = _providers_with_stock(config_path)
     live = sum(1 for _, r in pairs if r.ok and any(o.in_stock for o in r.offers))
@@ -210,6 +213,18 @@ def run_add_phone(
             except Exception as e:  # noqa: BLE001 - one account must not kill the run
                 result = AccountResult(account.email, False, error=f"{type(e).__name__}: {e}")
             finally:
+                # A failure used to close the window instantly, taking the only
+                # live view of what went wrong with it. The dumps survive, but
+                # the page itself is often the faster answer.
+                if not result.ok and hold_seconds and not headless:
+                    print(
+                        f"\n  Window stays open {hold_seconds}s so you can look. "
+                        "Ctrl-C to stop the run.\n"
+                    )
+                    try:
+                        time.sleep(hold_seconds)
+                    except KeyboardInterrupt:
+                        pass
                 browser.close()
 
             results.append(result)

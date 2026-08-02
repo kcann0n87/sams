@@ -31,6 +31,9 @@ class WalmartConfig:
     selectors: dict[str, str]
     captcha_marker: str = ""
     captcha_wait_seconds: int = 300
+    # How long to let the code submission's redirect chain finish before
+    # calling the sign-in failed.
+    signin_wait_seconds: int = 45
 
 
 @dataclass
@@ -462,12 +465,41 @@ class WalmartFlow:
         if submit and submit.lower() != "auto":
             self.page.click(submit)
             return True
-        button = self._first_visible(self.CODE_SUBMIT_SELECTORS)
+        button = self._find_code_submit()
         if button is not None:
             button.click()
         # Some of these forms submit themselves once the last box is filled,
         # so a missing button is not a failure.
         return True
+
+    # What confirms the code, and what must never be mistaken for it. "Resend
+    # code" sits on the same screen and is a plain submit button — pressing it
+    # issues a new code and invalidates the one just typed, which looks exactly
+    # like the code being rejected.
+    SUBMIT_WORDS = ("verify", "continue", "sign in", "submit", "next", "confirm")
+    NOT_SUBMIT_WORDS = (
+        "resend", "send again", "new code", "didn't", "did not", "back",
+        "cancel", "feedback", "change", "try another", "another way",
+    )
+
+    def _find_code_submit(self) -> Any | None:
+        for element in self._clickables():
+            text = self._option_text(element).lower()
+            if not text or len(text) > 40:
+                continue
+            if any(w in text for w in self.NOT_SUBMIT_WORDS):
+                continue
+            if any(w in text for w in self.SUBMIT_WORDS) and self._enabled(element):
+                print(f"    submitting with: {text!r}")
+                return element
+        # Nothing said so by name. A bare submit is the last resort, and only
+        # when its own wording isn't on the stop list.
+        found = self._first_visible(("button[type='submit']:visible",))
+        if found is not None:
+            text = self._option_text(found).lower()
+            if not any(w in text for w in self.NOT_SUBMIT_WORDS):
+                return found
+        return None
 
     def _code_target(self) -> Any | None:
         """The control to click for an emailed code, or None to use a password.
@@ -708,7 +740,7 @@ class WalmartFlow:
                     f"login via {method} didn't land on a signed-in page — check the "
                     "credentials, or correct walmart.selectors.logged_in_marker"
                 )
-        elif self.signed_out():
+        elif not self.wait_signed_in():
             # Without a marker there was no check at all, so a failed sign-in
             # sailed on into the purchase step and the "phone form" dump came
             # back as the login page. Still being on the identity host is
@@ -730,6 +762,21 @@ class WalmartFlow:
         except Exception:
             return False
         return any(m in url for m in self.SIGNED_OUT_MARKERS)
+
+    def wait_signed_in(self) -> bool:
+        """Poll until the browser leaves Walmart's identity host.
+
+        Submitting the code starts an async verification and a redirect chain.
+        Checking once, straight away, calls that a failed sign-in while it is
+        still in flight — and closes the window before anyone can see.
+        """
+        deadline = time.monotonic() + self.cfg.signin_wait_seconds
+        while True:
+            if not self.signed_out():
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(1)
 
     def open_phone_form(self) -> None:
         self.page.goto(self.cfg.phone_url)
@@ -830,4 +877,5 @@ def load_walmart_config(raw: dict[str, Any] | None) -> WalmartConfig:
         selectors=raw.get("selectors") or {},
         captcha_marker=raw.get("captcha_marker", ""),
         captcha_wait_seconds=int(raw.get("captcha_wait_seconds", 300)),
+        signin_wait_seconds=int(raw.get("signin_wait_seconds", 45)),
     )

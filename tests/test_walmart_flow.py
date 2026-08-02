@@ -106,6 +106,7 @@ class FakePage:
 def _flow(page: FakePage, **overrides):
     cfg = load_walmart_config(
         {"login_url": "https://wm/login", "phone_url": "https://wm/profile",
+         "signin_wait_seconds": 0,
          "selectors": {**SELECTORS, **overrides}}
     )
     return WalmartFlow(page, cfg, shot_dir=tempfile.mkdtemp())
@@ -807,6 +808,53 @@ class StillOnLoginPage(FakePage):
     """Sign-in didn't take: every navigation lands back on the identity host."""
 
     url = "https://identity.walmart.com/account/login?tp=X"
+
+
+def test_resend_code_is_never_mistaken_for_the_submit():
+    """"Resend code" sits on the otponly screen as a plain submit button.
+
+    Pressing it issues a new code and invalidates the one just typed, which is
+    indistinguishable from Walmart rejecting the code.
+    """
+    pressed = []
+
+    class Control:
+        def __init__(self, text):
+            self.text = text
+
+        def is_visible(self):
+            return True
+
+        def is_enabled(self):
+            return True
+
+        def inner_text(self):
+            return self.text
+
+        def get_attribute(self, name):
+            return None
+
+        def click(self):
+            pressed.append(self.text)
+
+    class OtpOnly(FakePage):
+        LABELS = ["Resend code", "Verify", "Give feedback"]
+
+        def locator(self, selector):
+            if selector == WalmartFlow.CLICKABLE_QUERY:
+                controls = [Control(t) for t in OtpOnly.LABELS]
+
+                class Multi:
+                    def all(self):
+                        return controls
+                return Multi()
+            return super().locator(selector)
+
+    flow = _flow(OtpOnly(), login_code_submit="auto")
+    submit = flow._find_code_submit()
+    assert submit is not None
+    submit.click()
+    assert pressed == ["Verify"], pressed
 
 
 def test_a_failed_login_is_caught_without_a_configured_marker():
