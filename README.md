@@ -123,6 +123,28 @@ python -m sams_automation watch --to jane@yourdomain.com   # just one
 
 Ctrl-C to stop. `--no-copy` disables the clipboard copy.
 
+## Checking SMS providers for Walmart numbers
+
+Separate from the membership flow, `sms-check` polls SMS-verification providers
+(TextVerified, 5sim, DaisySMS, SMSPool, and a dozen sites on the shared
+"activate" protocol) and reports which ones actually have Walmart / Sam's Club
+numbers in stock, and at what price. It's read-only — it never buys a number.
+
+```bash
+python -m sams_automation sms-check --list-providers   # what's wired up
+python -m sams_automation sms-check                    # one-shot check
+python -m sams_automation sms-check --watch            # alert on restock
+```
+
+Keys come from your environment (`DAISYSMS_API_KEY`, `SMSBOWER_API_KEY`, ...)
+or the `sms_providers:` block in `config.yaml`. 5sim needs no account at all,
+so `--provider 5sim` works out of the box.
+
+US Walmart pools are frequently empty — `--watch` exists because catching a
+restock matters more than any one-shot price comparison. Details, the full
+provider list, and how to add a site in config without writing code:
+**[docs/SMS_PROVIDERS.md](docs/SMS_PROVIDERS.md)**.
+
 ## Getting it working the first time
 
 See **[docs/FIRST_RUN.md](docs/FIRST_RUN.md)** — a step-by-step for proving the

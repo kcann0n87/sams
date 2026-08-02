@@ -112,6 +112,20 @@ REQUIRED_ACCOUNT_COLUMNS = [
 ]
 
 
+def load_sms_settings(path: str | Path) -> dict[str, Any]:
+    """Read just the `sms_providers:` section.
+
+    Deliberately not part of `load_config`: checking number availability needs
+    no IMAP or browser setup, and 5sim's price feed needs no account at all, so
+    `sms-check` stays useful before the rest of the config exists.
+    """
+    path = Path(path)
+    if not path.exists():
+        return {}
+    raw: dict[str, Any] = yaml.safe_load(path.read_text()) or {}
+    return raw.get("sms_providers") or {}
+
+
 def load_config(path: str | Path) -> Config:
     path = Path(path)
     if not path.exists():

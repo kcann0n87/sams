@@ -146,3 +146,67 @@ sams:
   # you to solve it, then resumes. Empty to disable. (TODO: confirm on first run)
   captcha_marker: "#px-captcha"
   captcha_wait_seconds: 300
+
+# =============================================================================
+# SMS verification providers (optional)
+#
+# Used only by `python -m sams_automation sms-check`, which asks each provider
+# whether it currently has numbers that can receive a Walmart / Sam's Club code
+# and what they cost. Nothing here affects the main automation run.
+#
+# You usually don't need this block at all: every provider below also reads its
+# key from an environment variable, so an existing shell setup just works.
+#   python -m sams_automation sms-check --list-providers
+# shows what was found and which variable each site looks for.
+#
+# 5sim needs no account whatsoever for its price feed.
+# =============================================================================
+
+sms_providers:
+  # Only used to rank RUB-priced offers (5sim) against USD ones. Leave unset
+  # and those offers are still listed, just excluded from the "cheapest" list.
+  # rub_per_usd: 90.0
+
+  # --- providers with a dedicated adapter -----------------------------------
+  5sim:
+    enabled: true          # public price feed; no key required
+
+  textverified:
+    api_key: ""            # or export TEXTVERIFIED_API_KEY
+    username: ""           # the email you log in with; or TEXTVERIFIED_USERNAME
+
+  daisysms:
+    api_key: ""            # or export DAISYSMS_API_KEY
+
+  herosms:
+    api_key: ""            # or export HEROSMS_API_KEY
+
+  smspool:
+    api_key: ""            # or export SMSPOOL_API_KEY
+
+  # --- sites on the shared "activate" (handler_api) protocol ----------------
+  # These need nothing but a key — the base URL is already registered. Set the
+  # key here or export the variable shown by --list-providers:
+  #
+  #   smsbower ($SMSBOWER_API_KEY)        tiger-sms ($TIGERSMS_API_KEY)
+  #   grizzly-sms ($GRIZZLYSMS_API_KEY)   sms-man ($SMSMAN_API_KEY)
+  #   smshub ($SMSHUB_API_KEY)            sms-acktiv ($SMS_ACKTIV_API_KEY)
+  #   simsms ($SIMSMS_API_KEY)            5sim-activate ($FIVESIM_ACTIVATE_API_KEY)
+  #   sms-activation ($SMS_ACTIVATION_SERVICE_API_KEY)
+  #
+  # NOTE: sms-activate itself shut down 2025-12-29; use hero-sms instead.
+  #
+  # smsbower:
+  #   api_key: ""
+  #   base_url: ""         # only if the site has moved domains
+
+  # --- anything else --------------------------------------------------------
+  # Most resellers clone one of four APIs, so a new site needs no code — just
+  # name its protocol. Known protocols: sms-activate (aka handler_api), 5sim,
+  # smspool, textverified.
+  #
+  # custom:
+  #   - name: "some-new-site"
+  #     protocol: "sms-activate"
+  #     base_url: "https://api.some-new-site.com"
+  #     api_key: ""

@@ -13,15 +13,19 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from datetime import datetime, timedelta, timezone
 
 from .config import load_accounts, load_config
 from .imap_client import ImapClient, VerificationTimeout
-from .runner import run
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
+    # Imported here, not at module scope: this is the only command that needs
+    # Playwright, and `sms-check` must stay usable without a browser install.
+    from .runner import run
+
     cfg = load_config(args.config)
     if args.headless:
         cfg.browser.headless = True
@@ -134,6 +138,246 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _sms_list_providers(providers, settings) -> int:
+    """Show what's wired up and what's still missing a key."""
+    from .sms_providers import (
+        ACTIVATE_ALIASES,
+        DEAD_PROVIDERS,
+        KNOWN_ACTIVATE_HOSTS,
+        PROVIDERS,
+        build_known_activate,
+    )
+
+    active = {p.name for p in providers}
+    print("Active (a key was found in config or the environment):")
+    for name in sorted(active):
+        print(f"  + {name}")
+    if not active:
+        print("  (none)")
+
+    print("\nKnown but not configured:")
+    missing = []
+    for name in sorted(PROVIDERS):
+        if name not in active:
+            env = PROVIDERS[name].env_key
+            missing.append(f"  - {name:<16} {'$' + env if env else ''}")
+    for name in sorted(KNOWN_ACTIVATE_HOSTS):
+        # Skip aliases: they're the same site as a built-in listed just above.
+        if name in ACTIVATE_ALIASES:
+            continue
+        if name not in active and build_known_activate(name) is None:
+            missing.append(f"  - {name:<16} ${KNOWN_ACTIVATE_HOSTS[name]['env']}")
+    print("\n".join(missing) if missing else "  (none)")
+
+    print("\nDefunct:")
+    for name, reason in DEAD_PROVIDERS.items():
+        print(f"  x {name:<16} {reason}")
+    print(
+        "\nSet a key by exporting the listed variable, or add it under "
+        "`sms_providers:` in your config.\nAnything not listed can be added as a "
+        "`custom:` entry — see docs/SMS_PROVIDERS.md."
+    )
+    return 0
+
+
+def _sms_render(reports, rub_per_usd, in_stock_only: bool) -> list[tuple[float, str]]:
+    """Print the per-provider table; return (usd, label) for in-stock offers."""
+    from .sms_providers import to_usd
+
+    rows: list[tuple[float, str]] = []
+    for report in sorted(reports, key=lambda r: r.provider):
+        if not report.ok:
+            print(f"  {report.provider:<14} ERROR  {report.error}")
+            continue
+        offers = [o for o in report.offers if o.in_stock or not in_stock_only]
+        stock = report.total_stock
+        stock_txt = f"{stock} in stock" if stock is not None else "stock not reported"
+        print(f"  {report.provider:<14} {len(offers)} offer(s), {stock_txt}")
+        for note in report.notes:
+            print(f"  {'':<14} note: {note}")
+        for o in sorted(offers, key=lambda o: (o.price is None, o.price or 0)):
+            price = f"{o.price:.2f} {o.currency}" if o.price is not None else "n/a"
+            count = str(o.count) if o.count is not None else "-"
+            rate = f"{o.success_rate:.0f}%" if o.success_rate is not None else "-"
+            print(
+                f"  {'':<14}   {o.service[:18]:<18} {o.country[:14]:<14} "
+                f"{o.operator[:12]:<12} {price:>12}  qty={count:<7} rate={rate}"
+            )
+            usd = to_usd(o, rub_per_usd)
+            if usd is not None and o.in_stock:
+                rows.append((usd, f"{o.provider} / {o.service} / {o.country} ({o.operator})"))
+        print()
+    return rows
+
+
+def _sms_stock_keys(reports) -> set[str]:
+    """Identity of every offer currently in stock, for change detection."""
+    return {
+        f"{o.provider}/{o.service_code}/{o.country}/{o.operator}"
+        for r in reports
+        if r.ok
+        for o in r.offers
+        if o.in_stock
+    }
+
+
+def _cmd_sms_watch(args, providers, terms, rub_per_usd) -> int:
+    """Poll until stock shows up, then make noise about it.
+
+    Walmart US pools sit empty for long stretches, so the useful mode isn't a
+    one-shot check — it's sitting on the feed and catching the window. Only
+    changes are printed, so this stays readable running for hours.
+    """
+    import time
+
+    from .sms_providers import check_all
+
+    print(
+        f"Watching {len(providers)} provider(s) every {args.interval}s. "
+        "Ctrl-C to stop.\n"
+    )
+    seen_in_stock: set[str] = set()
+    first_pass = True
+    polls = 0
+    try:
+        while True:
+            reports = check_all(providers, terms, us_only=not args.all_countries)
+            polls += 1
+            current = _sms_stock_keys(reports)
+            fresh = current - seen_in_stock
+
+            if fresh or first_pass:
+                stamp = datetime.now().strftime("%H:%M:%S")
+                if fresh and not first_pass:
+                    # \a rings the terminal bell — the whole point of watching.
+                    print(f"\a{'=' * 62}")
+                    print(f"  {stamp}  STOCK APPEARED ({len(fresh)} new offer(s))")
+                    print(f"{'=' * 62}")
+                else:
+                    print(f"--- {stamp}  poll #{polls}")
+                rows = _sms_render(reports, rub_per_usd, args.in_stock_only)
+                if rows:
+                    rows.sort()
+                    print("Cheapest in-stock (USD equivalent):")
+                    for usd, label in rows[:5]:
+                        print(f"  ${usd:0.2f}  {label}")
+                    print()
+                if args.once_in_stock and current:
+                    print("Stock found — exiting (--once-in-stock).")
+                    return 0
+            else:
+                stamp = datetime.now().strftime("%H:%M:%S")
+                errs = sum(1 for r in reports if not r.ok)
+                state = "still no stock" if not current else f"{len(current)} offer(s), unchanged"
+                suffix = f", {errs} provider error(s)" if errs else ""
+                print(f"  {stamp}  poll #{polls}: {state}{suffix}")
+
+            seen_in_stock = current
+            first_pass = False
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print(f"\nStopped after {polls} poll(s).")
+        return 0
+
+
+def _cmd_sms_check(args: argparse.Namespace) -> int:
+    """Ask each SMS provider whether it has Walmart numbers, and at what price."""
+    from .config import load_sms_settings
+    from .sms_providers import (
+        DEFAULT_TERMS,
+        PROTOCOLS,
+        PROVIDERS,
+        build_custom,
+        build_providers,
+        check_all,
+    )
+
+    settings = load_sms_settings(args.config)
+    rub_per_usd = settings.get("rub_per_usd")
+    providers, problems = build_providers(settings)
+    for problem in problems:
+        print(f"Config warning: {problem}", file=sys.stderr)
+
+    if args.list_providers:
+        return _sms_list_providers(providers, settings)
+
+    if args.provider:
+        wanted = {p.lower() for p in args.provider}
+        by_name = {p.name.lower(): p for p in providers}
+        # An explicit --provider overrides the config's enabled flags, so fall
+        # back to a bare instance for a known built-in that's switched off.
+        selected, unknown = [], []
+        for name in sorted(wanted):
+            if name in by_name:
+                selected.append(by_name[name])
+            elif name in PROVIDERS:
+                selected.append(PROVIDERS[name](settings.get(name) or {}))
+            else:
+                unknown.append(name)
+        if unknown:
+            known = sorted(set(PROVIDERS) | {p.name.lower() for p in providers})
+            print(
+                f"Unknown provider(s): {', '.join(unknown)}. "
+                f"Known: {', '.join(known)}",
+                file=sys.stderr,
+            )
+            return 2
+        providers = selected
+
+    if not providers:
+        print(
+            "No providers configured. 5sim needs no key and works out of the box:\n"
+            "  python -m sams_automation sms-check --provider 5sim\n"
+            "For the rest, add an `sms_providers:` block to your config "
+            "(see config.example.yaml).",
+            file=sys.stderr,
+        )
+        return 2
+
+    terms = args.term or list(DEFAULT_TERMS)
+    if args.watch:
+        return _cmd_sms_watch(args, providers, terms, rub_per_usd)
+
+    scope = "USA" if not args.all_countries else "all countries"
+    print(
+        f"Checking {len(providers)} provider(s) for "
+        f"{'/'.join(terms)} numbers in {scope} ...\n"
+    )
+    reports = check_all(providers, terms, us_only=not args.all_countries)
+
+    if args.json:
+        import dataclasses
+
+        print(json.dumps([dataclasses.asdict(r) for r in reports], indent=2, default=str))
+        return 0 if any(r.ok and any(o.in_stock for o in r.offers) for r in reports) else 1
+
+    rows = _sms_render(reports, rub_per_usd, args.in_stock_only)
+    if rows:
+        rows.sort()
+        print("Cheapest in-stock options (USD equivalent):")
+        for usd, label in rows[:5]:
+            print(f"  ${usd:0.2f}  {label}")
+        if rub_per_usd is None and any(
+            o.currency != "USD" for r in reports for o in r.offers
+        ):
+            print(
+                "\n  (Set sms_providers.rub_per_usd in your config to include "
+                "RUB-priced offers in this ranking.)"
+            )
+    else:
+        listed = sum(len(r.offers) for r in reports if r.ok)
+        if listed:
+            print(
+                f"No in-stock Walmart offers. {listed} offer(s) are listed but "
+                "the pools are empty — try `--watch` to catch a restock."
+            )
+        else:
+            print("No provider lists a Walmart service right now.")
+
+    any_stock = any(r.ok and any(o.in_stock for o in r.offers) for r in reports)
+    return 0 if any_stock else 1
+
+
 def _cmd_check(args: argparse.Namespace) -> int:
     """Validate config + accounts and print a summary without touching anything."""
     cfg = load_config(args.config)
@@ -223,6 +467,57 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--port", type=int, default=8765)
     s.add_argument("--no-open", dest="open_browser", action="store_false")
     s.set_defaults(func=_cmd_serve, open_browser=True)
+
+    sc = sub.add_parser(
+        "sms-check",
+        parents=[common],
+        help="Check SMS providers for Walmart number availability and price.",
+    )
+    sc.add_argument(
+        "--provider",
+        action="append",
+        default=None,
+        help="Only check this provider (repeatable). Default: all configured.",
+    )
+    sc.add_argument(
+        "--term",
+        action="append",
+        default=None,
+        help="Service name to match (repeatable). Default: walmart + sam's club.",
+    )
+    sc.add_argument(
+        "--all-countries",
+        action="store_true",
+        help="Don't restrict to US numbers.",
+    )
+    sc.add_argument(
+        "--in-stock-only",
+        action="store_true",
+        help="Hide offers the provider reports as out of stock.",
+    )
+    sc.add_argument("--json", action="store_true", help="Emit raw JSON instead of a table.")
+    sc.add_argument(
+        "--watch",
+        action="store_true",
+        help="Poll on an interval and alert when stock appears.",
+    )
+    sc.add_argument(
+        "--interval",
+        type=int,
+        default=60,
+        help="Seconds between polls in --watch mode (default 60).",
+    )
+    sc.add_argument(
+        "--once-in-stock",
+        action="store_true",
+        help="In --watch mode, exit as soon as anything is in stock.",
+    )
+    sc.add_argument(
+        "--list-providers",
+        action="store_true",
+        help="List every known provider and whether a key was found.",
+    )
+    sc.set_defaults(func=_cmd_sms_check)
 
     tp = sub.add_parser(
         "test-proxy",
