@@ -148,6 +148,25 @@ class WalmartFlow:
         except Exception:
             return False
 
+    def _visible(self, key: str) -> bool:
+        """Whether a configured selector matches something you can see.
+
+        The session check needs this rather than a URL: a sign-in form on
+        screen means signed out, whatever the address bar says, and deciding
+        otherwise skips straight past the email field.
+        """
+        selector = (self.cfg.selectors or {}).get(key, "")
+        if not selector:
+            return False
+        try:
+            located = self.page.locator(selector)
+            for index in range(min(located.count(), 5)):
+                if located.nth(index).is_visible():
+                    return True
+        except Exception:
+            return False
+        return False
+
     # Words that mark the "send me a one-time code" option apart from the other
     # things on that screen.
     CODE_WORDS = ("code", "passcode", "otp", "one-time", "one time")
@@ -628,7 +647,8 @@ class WalmartFlow:
         # page, and that redirect is the whole test — no selector, no
         # credentials, and no second bot check for a session that already
         # cleared one.
-        if not self.signed_out():
+        print(f"    session check: {self._url().split('?')[0]}")
+        if not self.signed_out() and not self._visible("login_email"):
             print("    already signed in — reusing the saved session")
             self.dismiss_interstitials()
             self.dump("after-login")

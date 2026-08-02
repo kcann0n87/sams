@@ -47,6 +47,14 @@ class FakeLocator:
     def count(self) -> int:
         return self._n
 
+    # The session check asks whether a matched element can actually be seen,
+    # so a locator that only knows how to count isn't enough to test it.
+    def nth(self, index: int) -> "FakeLocator":
+        return self
+
+    def is_visible(self) -> bool:
+        return self._n > 0
+
 
 class FakePage:
     """Records what the flow did, and can be told to fail at a given step."""
@@ -838,13 +846,30 @@ def test_an_existing_session_skips_sign_in_entirely():
     class AlreadyIn(FakePage):
         url = SIGNED_IN_URL
 
-    page = AlreadyIn()
+    # No sign-in form on an account page.
+    page = AlreadyIn(missing={"#email"})
     flow = _flow(page)
     result = add_phone_to_account(flow, ACCOUNT, lambda: (_purchase(), []))
     assert result.ok, result.error
     assert result.login_method == "session"
     assert page.filled.get("#email") is None, "signed in again for no reason"
     assert page.filled.get("#password") is None
+
+
+def test_a_visible_sign_in_form_beats_a_signed_in_looking_url():
+    """The URL is not proof on its own.
+
+    Deciding "signed in" while the email field is on screen skips straight
+    past it and fills nothing.
+    """
+    class LooksInButIsnt(FakePage):
+        url = SIGNED_IN_URL          # yet #email is present and visible
+
+    page = LooksInButIsnt()
+    flow = _flow(page)
+    result = add_phone_to_account(flow, ACCOUNT, lambda: (_purchase(), []))
+    assert result.ok, result.error
+    assert page.filled["#email"] == "a@example.com", "skipped the sign-in form"
 
 
 def test_resend_code_is_never_mistaken_for_the_submit():
