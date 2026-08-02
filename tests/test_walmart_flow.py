@@ -169,6 +169,25 @@ def test_login_marker_failure_stops_before_buying():
     assert "signed-in" in result.error
 
 
+def test_a_screenshot_is_taken_at_the_login_decision_point():
+    """The email screen is where the selectors get identified.
+
+    Walmart may show a password field, a "use a code instead" link, or a
+    Continue button to a second screen — and which one decides the whole
+    config. A failure here previously produced no image of that page.
+    """
+    shots = []
+
+    class ShotPage(FakePage):
+        def screenshot(self, path):
+            shots.append(Path(path).name)
+
+    page = ShotPage(fail_on="#password")   # the two-step-login failure
+    result = add_phone_to_account(_flow(page), ACCOUNT, lambda: (_purchase(), []))
+    assert not result.ok
+    assert "walmart-login-email-entered.png" in shots, shots
+
+
 # --- sign-in via emailed code ---------------------------------------------
 
 

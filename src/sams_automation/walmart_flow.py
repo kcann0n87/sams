@@ -125,12 +125,18 @@ class WalmartFlow:
         self.page.goto(self.cfg.login_url)
         self.wait_out_captcha()
         self._fill("login_email", account.email)
+        # The decision point: password field, "use a code instead", or a
+        # Continue button to a second screen. Whichever it is, this is the
+        # screenshot that identifies the selectors, so take it unconditionally.
+        self.shot("login-email-entered")
+
         # Walmart splits email and password across two screens, so a "continue"
         # button between them is optional rather than assumed.
         cont = (self.cfg.selectors or {}).get("login_continue", "")
         if cont:
             self.page.click(cont)
             self.wait_out_captcha()
+            self.shot("login-after-continue")
 
         use_code = (self.cfg.selectors or {}).get("login_use_code", "")
         if use_code and fetch_email_code is not None:
