@@ -13,7 +13,8 @@ browser flow in the rest of this repo, and nothing to do with bot checks.
 | `pvacodes.json` | beta.pvacodes.com | No — bespoke API |
 | `secureiosms.json` | secureiosms.com | No — bespoke API |
 | `smspool.json` | smspool.net | Possibly |
-| `activate-protocol.json` | DaisySMS, HeroSMS, tiger-sms, smsbower, grizzly-sms, sms-acktiv, simsms, smshub | Some |
+| `smsbower.json` | smsbower.online | Maybe |
+| `activate-protocol.json` | DaisySMS, HeroSMS, tiger-sms, grizzly-sms, sms-acktiv, simsms, smshub | Some |
 | `cyberyozh.json` | app.cyberyozh.com | No — and it sells **residential** numbers |
 
 ## How much to trust these
@@ -141,6 +142,24 @@ all, `"Invalid API key provided."` means it was sent and rejected.
 
 `need_fraud_score` requests a fraud check on the number, and `markup_percent`
 pays more for presumably better stock. Both are left at their defaults.
+
+### smsbower.json
+
+The activate protocol pointed at `smsbower.online`, so it needs no host edit —
+unlike `activate-protocol.json`, which ships aimed at DaisySMS.
+
+**The service code is blank**, because these differ per site even though the
+protocol doesn't. Find SMSBower's code for Walmart by adding the key to this
+repo and asking:
+
+```
+.venv/bin/python -m sams_automation sms-plan
+```
+
+Every pool it lists shows its service code in brackets. Put SMSBower's into
+the config's `service` value.
+
+Country `187` is the United States across this whole family.
 
 ### activate-protocol.json
 One schema for a dozen sites — they all clone `handler_api.php`. **Edit the
