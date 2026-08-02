@@ -376,24 +376,56 @@ class WalmartFlow:
             self._fill("login_password", account.password)
             self.page.click(self._sel("login_submit"))
 
+        self.settle()
         self.wait_out_captcha()
         self.dump("after-login")
 
         marker = (self.cfg.selectors or {}).get("logged_in_marker", "")
-        if marker and self.page.locator(marker).count() == 0:
+        if marker:
+            if self.page.locator(marker).count() == 0:
+                raise FlowError(
+                    f"login via {method} didn't land on a signed-in page — check the "
+                    "credentials, or correct walmart.selectors.logged_in_marker"
+                )
+        elif self.signed_out():
+            # Without a marker there was no check at all, so a failed sign-in
+            # sailed on into the purchase step and the "phone form" dump came
+            # back as the login page. Still being on the identity host is
+            # proof enough, and costs no configuration.
             raise FlowError(
-                f"login via {method} didn't land on a signed-in page — check the "
-                "credentials, or correct walmart.selectors.logged_in_marker"
+                f"login via {method} didn't work — still on {self.page.url.split('?')[0]}. "
+                "Check the credentials, or set walmart.selectors.logged_in_marker "
+                "if this is a false alarm"
             )
         return method
 
+    # Walmart runs sign-in on its own host, so being there afterwards means it
+    # didn't take. Any account page redirects here when the session is dead.
+    SIGNED_OUT_MARKERS = ("identity.walmart.com", "/account/login", "/account/signin")
+
+    def signed_out(self) -> bool:
+        try:
+            url = str(self.page.url)
+        except Exception:
+            return False
+        return any(m in url for m in self.SIGNED_OUT_MARKERS)
+
     def open_phone_form(self) -> None:
         self.page.goto(self.cfg.phone_url)
+        self.settle()
         self.wait_out_captcha()
+        if self.signed_out():
+            self.dump("phone-form")
+            raise FlowError(
+                f"{self.cfg.phone_url} redirected to sign-in — the session isn't "
+                "logged in. Nothing was bought"
+            )
         add = (self.cfg.selectors or {}).get("add_phone_button", "")
         if add:
             self.page.click(add)
+            self.settle()
         self.dump("phone-form")
+        print(f"    phone form: {self.describe()}")
 
     def submit_phone(self, national_number: str) -> None:
         self._fill("phone_input", national_number)

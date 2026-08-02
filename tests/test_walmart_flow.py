@@ -523,6 +523,53 @@ def test_an_explicit_selector_still_wins_over_the_search():
     assert page.clicked.count("#sendcode") == 1
 
 
+class StillOnLoginPage(FakePage):
+    """Sign-in didn't take: every navigation lands back on the identity host."""
+
+    url = "https://identity.walmart.com/account/login?tp=X"
+
+
+def test_a_failed_login_is_caught_without_a_configured_marker():
+    """Nothing checked before, so a dead session reached the purchase step.
+
+    The giveaway is the phone-form dump coming back as the login page — by
+    which point money could already have been spent.
+    """
+    bought = []
+    page = StillOnLoginPage()
+    flow = _flow(page)
+    result = add_phone_to_account(
+        flow, ACCOUNT, lambda: (bought.append(1), (_purchase(), []))[1]
+    )
+    assert not result.ok
+    assert "didn't work" in result.error, result.error
+    assert not bought, "spent money on a signed-out session"
+
+
+def test_the_profile_page_redirecting_to_signin_stops_the_run():
+    class RedirectsAfterLogin(FakePage):
+        """Login looks fine, but the profile page bounces to sign-in."""
+
+        url = "https://www.walmart.com/account"
+
+        def goto(self, url):
+            super().goto(url)
+            if "profile" in url:
+                type(self).url = "https://identity.walmart.com/account/login"
+
+    bought = []
+    page = RedirectsAfterLogin()
+    try:
+        result = add_phone_to_account(
+            _flow(page), ACCOUNT, lambda: (bought.append(1), (_purchase(), []))[1]
+        )
+    finally:
+        RedirectsAfterLogin.url = "https://www.walmart.com/account"
+    assert not result.ok
+    assert "redirected to sign-in" in result.error, result.error
+    assert not bought, "spent money before confirming the form was reachable"
+
+
 def test_missing_password_field_is_named_rather_than_timing_out():
     """Filling a password field that isn't there burns 30s per account.
 
