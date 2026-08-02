@@ -21,6 +21,7 @@ from pathlib import Path
 from flask import Flask, Response, jsonify, request, send_from_directory
 
 from .config import load_accounts, load_config
+from .web_sms import register_sms_routes
 
 
 class Job:
@@ -115,6 +116,7 @@ INDEX_HTML = """<!doctype html>
 <header>
   <h1>Sam's Club — Complimentary Membership Automation</h1>
   <div class="sub" id="cfgsub">loading…</div>
+  <div class="sub"><a href="/sms" style="color:#fff">SMS providers &amp; Walmart stock &rarr;</a></div>
 </header>
 <main>
   <div class="card">
@@ -224,6 +226,7 @@ def create_app(config_path: str, accounts_path: str) -> Flask:
     app = Flask(__name__)
     job = Job()
     root = Path.cwd()
+    register_sms_routes(app, config_path)
 
     def _cfg():
         return load_config(config_path)

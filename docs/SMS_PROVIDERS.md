@@ -28,6 +28,37 @@ Exit code is `0` when at least one provider has stock, `1` when nothing is
 available, `2` on a usage error — so it drops straight into a cron job or an
 `if` in a shell script.
 
+## The web UI (easiest way in)
+
+Entering a dozen API keys on the command line is miserable, so the local web UI
+has a page for it:
+
+```bash
+python -m sams_automation serve      # opens your browser
+```
+
+Then click **SMS providers & Walmart stock** in the header, or go straight to
+<http://127.0.0.1:8765/sms>. The page gives you:
+
+- **A key form for every provider**, showing which already have a key and
+  whether it came from the file or your shell environment.
+- **A one-line verdict** — "in stock, cheapest $0.35 at daisysms" or "no stock;
+  4 providers offer Walmart but the pools are empty" — so you don't have to
+  read four tables to answer the only question that matters.
+- **Keep watching** — re-checks every 60s and fires a browser notification,
+  a sound and an on-page banner the moment a pool refills.
+
+### Where keys are stored
+
+Keys typed into the page go to **`sms_keys.json`** in the project folder:
+git-ignored, `chmod 600`, and never sent back to the browser — the page only
+ever sees that a key is set plus its last four characters. The server binds to
+`127.0.0.1`, so nothing is reachable from your network.
+
+Precedence is `sms_keys.json` > `config.yaml` > environment, so a key typed
+into the UI overrides a stale exported one. Clearing the field falls back to
+whatever config or the environment provides rather than blanking it.
+
 ## The landscape (researched 2026-08)
 
 > **SMS-Activate shut down on 2025-12-29.** It was the biggest provider and is

@@ -130,14 +130,24 @@ Separate from the membership flow, `sms-check` polls SMS-verification providers
 "activate" protocol) and reports which ones actually have Walmart / Sam's Club
 numbers in stock, and at what price. It's read-only — it never buys a number.
 
+Easiest way in is the local web UI — a form for all the API keys, a live
+availability table, and a watch mode that alerts you when a pool refills:
+
+```bash
+python -m sams_automation serve     # then click "SMS providers" in the header
+```
+
+Or from the terminal:
+
 ```bash
 python -m sams_automation sms-check --list-providers   # what's wired up
 python -m sams_automation sms-check                    # one-shot check
 python -m sams_automation sms-check --watch            # alert on restock
 ```
 
-Keys come from your environment (`DAISYSMS_API_KEY`, `SMSBOWER_API_KEY`, ...)
-or the `sms_providers:` block in `config.yaml`. 5sim needs no account at all,
+Keys are entered in the web UI (stored in git-ignored `sms_keys.json`), or come
+from your environment (`DAISYSMS_API_KEY`, `SMSBOWER_API_KEY`, ...) or the
+`sms_providers:` block in `config.yaml`. 5sim needs no account at all,
 so `--provider 5sim` works out of the box.
 
 US Walmart pools are frequently empty — `--watch` exists because catching a
@@ -177,6 +187,8 @@ accounts.example.csv    # copy to accounts.csv (git-ignored)
 src/sams_automation/
   config.py             # load + validate config and the account list
   imap_client.py        # poll the catch-all mailbox, extract code/link
+  sms_providers.py      # SMS provider adapters + Walmart availability check
+  web_sms.py            # the /sms page: API keys, stock table, watch mode
   sams_flow.py          # Playwright login -> add-member -> verify
   runner.py             # loop over accounts, log results, pace requests
   cli.py                # run / check / test-imap commands

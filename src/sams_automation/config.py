@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -112,18 +113,80 @@ REQUIRED_ACCOUNT_COLUMNS = [
 ]
 
 
-def load_sms_settings(path: str | Path) -> dict[str, Any]:
-    """Read just the `sms_providers:` section.
+# Keys entered through the web UI land here rather than in config.yaml: it's a
+# machine-written file, so no comments or formatting to preserve, and one file
+# to keep out of git. Git-ignored, same as every other secret.
+SMS_KEYS_FILE = "sms_keys.json"
+
+
+def load_sms_settings(
+    path: str | Path, keys_path: str | Path = SMS_KEYS_FILE
+) -> dict[str, Any]:
+    """Read the `sms_providers:` section, merged with web-UI-saved keys.
 
     Deliberately not part of `load_config`: checking number availability needs
     no IMAP or browser setup, and 5sim's price feed needs no account at all, so
     `sms-check` stays useful before the rest of the config exists.
+
+    Precedence is keys file > config.yaml > environment, i.e. most-explicit
+    wins — a key typed into the UI overrides a stale exported one.
     """
+    settings: dict[str, Any] = {}
     path = Path(path)
-    if not path.exists():
+    if path.exists():
+        raw: dict[str, Any] = yaml.safe_load(path.read_text()) or {}
+        settings = raw.get("sms_providers") or {}
+
+    for name, entry in _load_sms_keys(keys_path).items():
+        merged = dict(settings.get(name) or {})
+        # Only non-empty values override; clearing a field in the UI writes ""
+        # and should fall back to config/env rather than blanking them.
+        merged.update({k: v for k, v in entry.items() if v not in (None, "")})
+        settings[name] = merged
+    return settings
+
+
+def _load_sms_keys(keys_path: str | Path) -> dict[str, dict[str, Any]]:
+    keys_path = Path(keys_path)
+    if not keys_path.exists():
         return {}
-    raw: dict[str, Any] = yaml.safe_load(path.read_text()) or {}
-    return raw.get("sms_providers") or {}
+    try:
+        data = json.loads(keys_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(v, dict)}
+
+
+def save_sms_key(
+    provider: str,
+    api_key: str | None = None,
+    username: str | None = None,
+    *,
+    enabled: bool | None = None,
+    keys_path: str | Path = SMS_KEYS_FILE,
+) -> None:
+    """Write one provider's credentials to the keys file, creating it if needed.
+
+    Only the fields passed are touched, so saving a username doesn't wipe a key.
+    """
+    keys_path = Path(keys_path)
+    data = _load_sms_keys(keys_path)
+    entry = dict(data.get(provider) or {})
+    if api_key is not None:
+        entry["api_key"] = api_key.strip()
+    if username is not None:
+        entry["username"] = username.strip()
+    if enabled is not None:
+        entry["enabled"] = bool(enabled)
+    data[provider] = entry
+    keys_path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    # Secrets: keep it readable only by the owner, best-effort (no-op on Windows).
+    try:
+        keys_path.chmod(0o600)
+    except OSError:
+        pass
 
 
 def load_config(path: str | Path) -> Config:

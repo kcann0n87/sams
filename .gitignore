@@ -2,6 +2,7 @@
 config.yaml
 accounts.csv
 proxies.txt
+sms_keys.json
 results.csv
 recorded_flow.py
 state/
