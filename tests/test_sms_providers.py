@@ -268,6 +268,69 @@ def test_smspool_no_walmart_service():
     assert report.ok and report.offers == []
 
 
+# --- protocol probing -----------------------------------------------------
+
+
+def test_probe_identifies_handler_api_host():
+    install({"getServicesList": DAISY_SERVICES, "getPrices": DAISY_PRICES})
+    results = sp.probe("https://unknown.example", "k", name="unknown")
+    winner = results[0]
+    assert winner.protocol == "sms-activate", [r.protocol for r in results]
+    assert winner.sells_walmart and winner.walmart[0].service_code == "wm"
+
+
+def test_probe_identifies_smspool_host():
+    install(
+        {
+            "service/retrieve_all": POOL_SERVICES,
+            "country/retrieve_all": POOL_COUNTRIES,
+            "request/price": POOL_PRICE,
+        }
+    )
+    results = sp.probe("https://unknown.example", "k")
+    assert results[0].protocol == "smspool"
+    assert results[0].sells_walmart
+
+
+def test_probe_ranks_walmart_match_above_bare_auth():
+    # A host that answers on two protocols but only sells Walmart on one.
+    install({"service/retrieve_all": [], "getPrices": DAISY_PRICES,
+             "getServicesList": DAISY_SERVICES})
+    results = sp.probe("https://unknown.example", "k")
+    assert results[0].sells_walmart
+    assert not results[0].detail.startswith("responded, but")
+
+
+def test_probe_reports_total_failure_cleanly():
+    install({})  # nothing answers
+    results = sp.probe("https://unknown.example", "k")
+    assert results and not any(r.ok for r in results)
+    assert all(r.detail for r in results), "every failure needs a reason"
+
+
+def test_probe_does_not_double_report_alias_protocol():
+    install({"getServicesList": DAISY_SERVICES, "getPrices": DAISY_PRICES})
+    results = sp.probe("https://unknown.example", "k")
+    assert [r.protocol for r in results].count("sms-activate") == 1
+    assert "handler_api" not in [r.protocol for r in results]
+
+
+def test_probe_snippet_is_valid_yaml_for_the_custom_block():
+    import yaml
+
+    snippet = sp.probe_config_snippet("newsite", "https://api.new.example", "sms-activate")
+    parsed = yaml.safe_load(snippet)
+    entry = parsed["sms_providers"]["custom"][0]
+    assert entry["name"] == "newsite"
+    assert entry["protocol"] == "sms-activate"
+    assert entry["base_url"] == "https://api.new.example"
+    # And the snippet must actually build a provider.
+    built, problems = sp.build_providers(
+        {"custom": [{**entry, "api_key": "k"}]}
+    )
+    assert problems == [] and "newsite" in {p.name for p in built}
+
+
 # --- orchestration --------------------------------------------------------
 
 

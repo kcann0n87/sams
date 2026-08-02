@@ -138,6 +138,60 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_sms_probe(args: argparse.Namespace) -> int:
+    """Work out which API protocol an unknown provider speaks."""
+    import os
+
+    from .config import load_sms_settings
+    from .sms_providers import probe, probe_config_snippet
+
+    name = args.name or "probe"
+    key = args.key or os.environ.get(args.key_env or "", "")
+    if not key:
+        settings = load_sms_settings(args.config)
+        key = str((settings.get(name) or {}).get("api_key") or "")
+    if not key:
+        print(
+            "No API key found. Pass --key, or --key-env NAME to read it from the\n"
+            "environment (preferred — keeps the key out of your shell history).",
+            file=sys.stderr,
+        )
+        return 2
+
+    print(f"Probing {args.base_url} with {len(PROTOCOL_NAMES())} protocol(s) ...\n")
+    results = probe(args.base_url, key, name=name)
+    for r in results:
+        mark = "MATCH" if r.sells_walmart else ("ok   " if r.ok else "no   ")
+        print(f"  {mark}  {r.protocol:<14} {r.detail}")
+        for offer in r.walmart[:5]:
+            price = f"{offer.price:.2f} {offer.currency}" if offer.price is not None else "n/a"
+            qty = offer.count if offer.count is not None else "-"
+            print(f"  {'':<7} {'':<14}   {offer.service} · {offer.country} · {price} · qty={qty}")
+
+    winner = next((r for r in results if r.sells_walmart), None) or next(
+        (r for r in results if r.ok), None
+    )
+    if winner is None:
+        print(
+            "\nNothing matched. Either the key is wrong, the base URL is off, or this\n"
+            "site speaks an API we don't know yet — send me its docs and I'll add it."
+        )
+        return 1
+
+    print(f"\nBest match: {winner.protocol}")
+    if not winner.sells_walmart:
+        print("  (authenticated, but no Walmart service in its catalog)")
+    print("\nAdd it to config.yaml:\n")
+    print(probe_config_snippet(name, args.base_url, winner.protocol))
+    return 0
+
+
+def PROTOCOL_NAMES():
+    from .sms_providers import PROTOCOLS
+
+    return [p for p in PROTOCOLS if p != "handler_api"]
+
+
 def _sms_list_providers(providers, settings) -> int:
     """Show what's wired up and what's still missing a key."""
     from .sms_providers import (
@@ -518,6 +572,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="List every known provider and whether a key was found.",
     )
     sc.set_defaults(func=_cmd_sms_check)
+
+    sp_ = sub.add_parser(
+        "sms-probe",
+        parents=[common],
+        help="Detect which API protocol an unknown SMS provider speaks.",
+    )
+    sp_.add_argument("base_url", help="e.g. https://api.some-site.com")
+    sp_.add_argument("--name", default=None, help="What to call it in config.")
+    sp_.add_argument(
+        "--key-env",
+        default=None,
+        help="Read the API key from this environment variable (preferred).",
+    )
+    sp_.add_argument(
+        "--key", default=None, help="API key inline (ends up in shell history)."
+    )
+    sp_.set_defaults(func=_cmd_sms_probe)
 
     tp = sub.add_parser(
         "test-proxy",

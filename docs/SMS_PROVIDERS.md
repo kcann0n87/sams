@@ -166,6 +166,34 @@ sms_providers:
     enabled: false                          # skip without unsetting the key
 ```
 
+### Working out what protocol a site speaks
+
+Resellers rarely advertise "we're SMS-Activate compatible" — you're expected to
+already know. With a dozen keys across a dozen sites that's a lot of guessing,
+so `sms-probe` tries each known protocol and reports what actually parsed:
+
+```bash
+export MYSITE_KEY=...          # keeps the key out of your shell history
+python -m sams_automation sms-probe https://api.some-site.com \
+    --name some-site --key-env MYSITE_KEY
+```
+
+```
+  MATCH  sms-activate   1 Walmart offer(s)
+                           Walmart · USA · 0.45 USD · qty=12
+  no     5sim           HTTP 404: Not Found
+  no     smspool        HTTP 404: Not Found
+
+Best match: sms-activate
+```
+
+It prints the exact `custom:` block to paste. Results rank protocols that found
+a Walmart service above ones that merely authenticated, so a site that answers
+on two protocols still points you at the useful one.
+
+If nothing matches, the site speaks an API that isn't one of the four — that's
+a docs-and-code job, not a config one.
+
 ### Adding a site that isn't registered
 
 Nearly every reseller is a clone of one of four APIs, so this needs no code —

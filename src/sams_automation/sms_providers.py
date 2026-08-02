@@ -700,6 +700,76 @@ def build_custom(entry: dict[str, Any]) -> Provider:
 # --------------------------------------------------------------------------
 
 
+@dataclass
+class ProbeResult:
+    """What one protocol guess did when pointed at an unknown host."""
+
+    protocol: str
+    ok: bool
+    detail: str
+    walmart: list[Offer] = field(default_factory=list)
+    service_count: int | None = None
+
+    @property
+    def sells_walmart(self) -> bool:
+        return bool(self.walmart)
+
+
+def probe(
+    base_url: str,
+    api_key: str = "",
+    name: str = "probe",
+    terms: Sequence[str] = DEFAULT_TERMS,
+) -> list[ProbeResult]:
+    """Work out which API a host speaks by trying each protocol against it.
+
+    Resellers rarely say "we're SMS-Activate compatible" — you're expected to
+    already know. With a dozen keys across a dozen sites that's a lot of
+    guessing, so try each one and report what actually parsed.
+
+    Results come back ordered best-first: protocols that found a Walmart
+    service, then ones that authenticated but didn't, then failures.
+    """
+    results: list[ProbeResult] = []
+    for protocol, cls in PROTOCOLS.items():
+        if protocol == "handler_api":
+            continue  # alias of sms-activate; probing both is just noise
+        provider = cls({"name": name, "base_url": base_url, "api_key": api_key})
+        report = provider.check(terms)
+        if report.ok:
+            results.append(
+                ProbeResult(
+                    protocol=protocol,
+                    ok=True,
+                    detail=(
+                        f"{len(report.offers)} Walmart offer(s)"
+                        if report.offers
+                        else "responded, but lists no Walmart service"
+                    ),
+                    walmart=report.offers,
+                )
+            )
+        else:
+            results.append(
+                ProbeResult(protocol=protocol, ok=False, detail=report.error or "failed")
+            )
+
+    results.sort(key=lambda r: (not r.sells_walmart, not r.ok, r.protocol))
+    return results
+
+
+def probe_config_snippet(name: str, base_url: str, protocol: str) -> str:
+    """The exact YAML to paste once a probe identifies a host."""
+    return (
+        "sms_providers:\n"
+        "  custom:\n"
+        f"    - name: \"{name}\"\n"
+        f"      protocol: \"{protocol}\"\n"
+        f"      base_url: \"{base_url}\"\n"
+        "      api_key: \"...\"\n"
+    )
+
+
 def build_providers(settings: dict[str, Any] | None) -> tuple[list[Provider], list[str]]:
     """Instantiate every provider that's configured and switched on.
 
