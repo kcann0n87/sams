@@ -187,10 +187,16 @@ host edit the generic file does:
 | `sms-activation.json` | `sms-activation-service.com` |
 | `smshub.json` | `smshub.org` |
 
-**Every one ships with a blank service code**, and unlike SMSBower's `wr`
-these haven't been confirmed against a live catalogue. Country `187` is the
-United States throughout. To find a site's own code for Walmart, put its key
-in this repo and run:
+**Grizzly is confirmed**: Walmart is `wr`, Sam's Club is `sams`, from its live
+catalogue. The other four still ship with a blank service code. Country `187`
+is the United States throughout.
+
+`wr` is now Walmart on SMSBower, Grizzly and CyberYozh's virtual pool, so it
+is a reasonable first guess elsewhere — but check rather than assume. Buying
+the wrong service is how you pay for a number that can never receive the code
+you're waiting for.
+
+To find a site's own code, put its key in this repo and run:
 
 ```
 .venv/bin/python -m sams_automation sms-plan
