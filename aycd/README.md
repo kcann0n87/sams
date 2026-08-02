@@ -83,13 +83,28 @@ Their US-only filtering deserves care: this project found that matching
 country names loosely lets Australia, Austria, Belarus, Cyprus, Mauritius and
 Russia through, because each contains "us". Pick the country by id.
 
-### cyberyozh.json — INCOMPLETE, read this first
+### cyberyozh.json — read the polling note before using
 
-Version 0.9.0 because two values are still blank and one endpoint is a guess.
+Version 0.9.1: the buy path is pinned from their live catalogue, the poll is
+still unverified.
 
-**Fill in before use.** Both configs ship with `service` and `country` empty.
-Get them from `GET /api/v1/numbers/services/` and
-`GET /api/v1/numbers/countries/` — the `code` field of each, not the name.
+**Walmart, taken from `GET /api/v1/numbers/services/`** — four separate pools,
+all United States (`667`), all `MIN_15`:
+
+| Config | Code | Provider |
+|---|---|---|
+| Walmart | `se024415f170e25` | residential |
+| Walmart Family Mobile | `s9629aca71a8b02` | residential |
+| Walmart MoneyCard | `s5e85c951385be4` | residential |
+| Walmart | `wr` | virtual |
+
+Residential codes are `s` plus a hash; virtual ones are short. The catalogue
+runs to **12,693 entries**, so anything else you need is in there — filter it
+by name rather than guessing a code.
+
+Start with plain **Walmart on residential**. Virtual is cheaper and carries
+the VoIP risk this whole project keeps running into. The other two are
+separate pools worth trying when the first is dry.
 
 **The poll is the guess.** There may be no detail route for a single order, so
 `getMessage` reads `history_sms_code` off the **first** entry of the active

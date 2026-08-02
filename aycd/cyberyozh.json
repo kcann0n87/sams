@@ -1,7 +1,7 @@
 {
   "name": "CyberYozh",
-  "description": "app.cyberyozh.com \u2014 residential and virtual numbers, X-Api-Key header",
-  "version": "0.9.0",
+  "description": "app.cyberyozh.com — residential and virtual numbers, X-Api-Key header",
+  "version": "0.9.1",
   "author": "sams-automation",
   "priceFormat": "USD",
   "credentials": [
@@ -17,15 +17,16 @@
       {
         "name": "provider",
         "label": "Provider type",
-        "description": "residential is non-VoIP and the better bet for retail sites. virtual is cheaper. Rentals are the _rent variants \u2014 not what you want for one code.",
+        "description": "residential is non-VoIP and the better bet for retail sites. virtual is cheaper. Rentals are the _rent variants — not what you want for one code.",
         "required": true,
         "defaultValue": "residential"
       },
       {
         "name": "service",
         "label": "Service code",
-        "description": "The short code from GET /numbers/services/, e.g. tg for Telegram",
-        "required": true
+        "description": "Code from GET /numbers/services/. Residential codes look like se024415f170e25; virtual ones are short, like wr.",
+        "required": true,
+        "defaultValue": "se024415f170e25"
       },
       {
         "name": "country",
@@ -44,19 +45,37 @@
     ],
     "userDataConfigs": [
       {
-        "name": "Walmart \u2014 residential (fill in the service code)",
+        "name": "Walmart — residential",
         "values": {
           "provider": "residential",
-          "service": "",
+          "service": "se024415f170e25",
           "country": "667",
           "period": "MIN_15"
         }
       },
       {
-        "name": "Walmart \u2014 virtual (fill in the service code)",
+        "name": "Walmart Family Mobile — residential",
+        "values": {
+          "provider": "residential",
+          "service": "s9629aca71a8b02",
+          "country": "667",
+          "period": "MIN_15"
+        }
+      },
+      {
+        "name": "Walmart MoneyCard — residential",
+        "values": {
+          "provider": "residential",
+          "service": "s5e85c951385be4",
+          "country": "667",
+          "period": "MIN_15"
+        }
+      },
+      {
+        "name": "Walmart — virtual (cheaper, VoIP risk)",
         "values": {
           "provider": "virtual",
-          "service": "",
+          "service": "wr",
           "country": "667",
           "period": "MIN_15"
         }
