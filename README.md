@@ -163,6 +163,45 @@ restock matters more than any one-shot price comparison. Details, the full
 provider list, and how to add a site in config without writing code:
 **[docs/SMS_PROVIDERS.md](docs/SMS_PROVIDERS.md)**.
 
+## Adding a phone number to Walmart accounts
+
+Buys a verification number and adds it to each account in
+`walmart_accounts.csv`, logging in through that account's proxy.
+
+```bash
+cp walmart_accounts.example.csv walmart_accounts.csv
+```
+
+Then edit `walmart_accounts.csv` — `email` and `password` are required, `proxy`
+can be left blank to use the rotation from `proxies.txt`. Do a single account
+first, with a visible browser:
+
+```bash
+./start.sh walmart-add-phone --limit 1
+```
+
+Leave `purchasing.dry_run: true` for that first pass. It goes all the way to
+the phone form and reports exactly what it would have bought, without spending
+anything.
+
+**The first run will fail on a selector, and that's the point.** Every entry in
+`walmart.selectors` ships as a placeholder, so you'll get something like:
+
+```
+[FAIL] you@gmail.com  no selector configured for 'phone_input' —
+       set walmart.selectors.phone_input in config.yaml
+```
+
+along with `screenshots/walmart-*.png` for each step. Correct the selector in
+`config.yaml` and re-run. No code changes, same loop as the Sam's Club flow.
+
+Order of operations matters here: the number is bought only once the browser is
+on the phone form, because a bought number starts expiring immediately. A failed
+login costs nothing.
+
+`walmart_results.csv` records each outcome and drives resume, so re-running
+skips accounts that already succeeded (`--no-resume` to redo them).
+
 ## Getting it working the first time
 
 See **[docs/FIRST_RUN.md](docs/FIRST_RUN.md)** — a step-by-step for proving the
