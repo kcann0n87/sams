@@ -79,7 +79,7 @@ def run_add_phone(
         + (f", persistent profile at {profile_dir}" if profile_dir else ", fresh profile")
     )
     if profile_dir:
-        print(f"  one profile per account under {profile_dir}/")
+        print(f"  one profile per account under {profile_dir}/{channel or 'chromium'}/")
 
     print("Checking provider stock once for the whole run ...")
     pairs, _ = _providers_with_stock(config_path)
@@ -153,9 +153,18 @@ def run_add_phone(
                 # the next, and with a sticky IP per account it would pair one
                 # browser identity with several addresses — the same
                 # contradiction rotating proxies create.
+                #
+                # Grouped by browser too. Chrome and Chromium share a profile
+                # format but not a version line: Chromium refuses to open a
+                # profile stamped by a newer Chrome, so one directory used by
+                # both breaks whichever is behind. Separate directories mean
+                # switching walmart.channel costs the trust that profile built
+                # up, but never corrupts it.
                 safe = re.sub(r"[^A-Za-z0-9._-]", "_", account.email)
-                account_profile = str(Path(profile_dir) / safe)
-                Path(account_profile).mkdir(parents=True, exist_ok=True)
+                account_profile = Path(profile_dir) / (channel or "chromium") / safe
+                _migrate_flat_profile(Path(profile_dir) / safe, account_profile)
+                account_profile.mkdir(parents=True, exist_ok=True)
+                account_profile = str(account_profile)
                 context = pw.chromium.launch_persistent_context(
                     user_data_dir=account_profile,
                     headless=headless,
@@ -219,6 +228,24 @@ def run_add_phone(
     ok = sum(1 for r in results if r.ok)
     print(f"Done: {ok}/{len(results)} account(s) got a number. Spent ${budget.spent:.2f}.")
     return results
+
+
+def _migrate_flat_profile(old: Path, new: Path) -> None:
+    """Move a pre-channel-split profile into its browser's directory.
+
+    Profiles used to live directly under the profile dir with no browser in the
+    path. Every one of those was written by Chrome — rebuild_config.py pinned
+    walmart.channel to "chrome" — so they belong under chrome/, and moving them
+    keeps whatever trust they earned instead of stranding it.
+    """
+    if not old.is_dir() or new.exists() or new.parent.name != "chrome":
+        return
+    try:
+        new.parent.mkdir(parents=True, exist_ok=True)
+        old.rename(new)
+        print(f"    moved existing profile into {new.parent.name}/")
+    except OSError as e:
+        print(f"    couldn't move the old profile ({e}) — starting a fresh one")
 
 
 def walmart_imap_config(raw: dict[str, Any] | None):
