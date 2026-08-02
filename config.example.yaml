@@ -294,13 +294,14 @@ walmart:
   # and this flow may not.
   #
   #   "chromium"  -> Playwright's own build (already downloaded, no Chrome
-  #                  needed, and works cleanly with per-account proxies)
-  #   "chrome"    -> the Google Chrome installed on this machine. Harder for a
-  #                  bot check to flag, but it shares your real profile.
+  #                  needed). This is the default.
+  #   "chrome"    -> the Google Chrome installed on this machine.
   #
-  # Walmart uses PerimeterX, the same vendor as Sam's Club, so expect more
-  # challenges on chromium. The run pauses for you to solve them either way.
-  # Remove this line entirely to inherit browser.channel.
+  # Either way the profile comes from user_data_dir below, so neither one
+  # touches your everyday browsing profile. Walmart uses PerimeterX, the same
+  # vendor as Sam's Club; both binaries get challenged and the run pauses for
+  # you to solve it. Leaving this line out means chromium — it does not inherit
+  # browser.channel, which exists for the Sam's Club flow.
   channel: "chromium"
 
   # A persistent browser profile, kept between runs. Walmart uses PerimeterX,

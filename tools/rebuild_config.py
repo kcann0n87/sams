@@ -24,7 +24,11 @@ oi = w.get("imap") or {}
 keep = {
     "imap_user": oi.get("username") or "",
     "imap_pass": oi.get("password") or "",
-    "channel": w.get("channel") or "chrome",
+    # chromium, matching the runner's own default. This said "chrome", so a
+    # config written before walmart.channel existed came back out of here
+    # pinned to Chrome — which is why Chrome kept launching after the runner
+    # stopped inheriting browser.channel.
+    "channel": w.get("channel") or "chromium",
     "profile": w.get("user_data_dir") or "walmart-profile",
     "icloud_pass": ((old.get("imap") or {}).get("password") or ""),
     "icloud_user": ((old.get("imap") or {}).get("username") or ""),
