@@ -398,12 +398,13 @@ def test_smspva_is_reachable_as_a_protocol():
 def test_unknown_protocol_sites_are_named_not_hidden():
     # Real sites with real APIs we haven't identified — they must be listed so
     # they can be probed, not silently absent.
-    assert set(sp.UNKNOWN_PROTOCOL_SITES) == {"verifysms", "secureiosms"}
+    assert set(sp.UNKNOWN_PROTOCOL_SITES) == {"verifysms"}
     for name, url in sp.UNKNOWN_PROTOCOL_SITES.items():
         assert url.startswith("https://"), name
     # A site graduates out of this list once its protocol is known.
     assert "pvacodes" not in sp.UNKNOWN_PROTOCOL_SITES
     assert "pvacodes" in sp.KNOWN_ACTIVATE_HOSTS
+    assert "secureiosms" in sp.PROVIDERS
 
 
 # --- protocol probing -----------------------------------------------------
@@ -465,6 +466,19 @@ def test_probe_capture_never_records_the_api_key():
     assert calls, "nothing captured"
     blob = repr(calls)
     assert "SUPERSECRETKEY" not in blob, "the API key leaked into the capture"
+
+
+def test_redaction_covers_urls_error_text_and_bodies():
+    key = "SUPERSECRETKEY"
+    assert "SUPERSECRETKEY" not in sp._redact(
+        f"HTTP 404: no route for /x?api_key={key}&action=getPrices", key
+    )
+    # Even without knowing the key, a key-bearing parameter is scrubbed.
+    assert "hunter2" not in sp._redact("GET /x?apikey=hunter2&id=3")
+    assert "hunter2" not in sp._redact("GET /x?api_key=hunter2")
+    assert "hunter2" not in sp._redact('{"url": "/y?token=hunter2"}')
+    # Non-secret params survive, or the output is useless.
+    assert "getPrices" in sp._redact("/x?api_key=abc&action=getPrices", "abc")
 
 
 def test_probe_capture_records_urls_and_bodies():

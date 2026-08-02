@@ -254,6 +254,49 @@ def test_fivesim_buy_parses_order():
     assert p.order_id == "991" and p.code == "334455"
 
 
+def test_secureiosms_buy_poll_and_cancel():
+    calls = []
+
+    def fake(url, **kw):
+        calls.append((kw.get("method", "GET"), url, kw.get("form")))
+        if "getnumber" in url:
+            return json.dumps({"id": "ORD7", "number": "+13055550123", "price": 0.55})
+        if "checkstatus" in url:
+            return json.dumps({"code": "552211"})
+        return json.dumps({"ok": True})
+    sp._request = fake
+
+    offer = sp.Offer("secureiosms", "walmart", "walmart", "US", price=0.55, currency="USD")
+    p = pur.acquire(sp.SecureIoSms({"api_key": "k"}), offer, _cfg(), pur.Budget(),
+                    sleep=lambda s: None)
+    assert p.order_id == "ORD7" and p.code == "552211" and p.national == "3055550123"
+    # The key travels as a query param, never in the body.
+    assert all(f is None or "api_key" not in f for _, _, f in calls)
+
+
+def test_secureiosms_cancel_uses_a_post_with_the_documented_body():
+    posted = []
+
+    def fake(url, **kw):
+        if "getnumber" in url:
+            return json.dumps({"id": "ORD8", "number": "+13055550123"})
+        if "changestatus" in url:
+            posted.append((kw.get("method"), kw.get("form")))
+            return json.dumps({"ok": True})
+        return json.dumps({})          # checkstatus: never returns a code
+    sp._request = fake
+
+    now, sleep = _clock()
+    offer = sp.Offer("secureiosms", "walmart", "walmart", "US", price=0.55, currency="USD")
+    try:
+        pur.acquire(sp.SecureIoSms({"api_key": "k"}), offer, _cfg(), pur.Budget(),
+                    sleep=sleep, now=now)
+        assert False, "should have timed out"
+    except sp.ProviderError:
+        pass
+    assert posted == [("POST", {"id": "ORD8", "action": "cancel"})], posted
+
+
 # --- offer selection ------------------------------------------------------
 
 

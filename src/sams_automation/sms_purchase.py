@@ -326,6 +326,50 @@ class TextVerifiedBuyer(Buyer):
             pass
 
 
+class SecureIoBuyer(Buyer):
+    """secureiosms: getnumber / checkstatus / changestatus, key in the query."""
+
+    def _get(self, path: str, **params: Any) -> Any:
+        return _request_json(
+            f"{self.provider.base_url}/{path}",
+            params={"api_key": self.provider.api_key, **params},
+        )
+
+    def buy(self, offer: Offer) -> Purchase:
+        data = self._get("getnumber", service=offer.service_code)
+        order_id = _first(data, "id", "order_id", "orderId")
+        phone = _first(data, "number", "phone", "phone_number")
+        if not order_id or not phone:
+            raise ProviderError(f"{self.name}: unexpected getnumber reply: {str(data)[:120]}")
+        return Purchase(
+            provider=self.name,
+            order_id=str(order_id),
+            phone=str(phone),
+            price=_as_float(_first(data, "price", "cost", "credits")) or offer.price,
+            currency="USD",
+            service_code=offer.service_code,
+        )
+
+    def poll(self, purchase: Purchase) -> str | None:
+        data = self._get("checkstatus", id=purchase.order_id)
+        code = _first(data, "code", "sms", "message")
+        return str(code) if code else None
+
+    def cancel(self, purchase: Purchase) -> None:
+        # Documented as POST with the key on the query string and the order in
+        # the body. Cancelling refunds the credits, so it's worth doing.
+        try:
+            _request(
+                f"{self.provider.base_url}/changestatus",
+                method="POST",
+                params={"api_key": self.provider.api_key},
+                form={"id": purchase.order_id, "action": "cancel"},
+            )
+            purchase.cancelled = True
+        except ProviderError:
+            pass
+
+
 def buyer_for(provider: Provider) -> Buyer:
     """Pick the buy/poll implementation matching a provider's protocol."""
     if isinstance(provider, FiveSim):
@@ -334,6 +378,8 @@ def buyer_for(provider: Provider) -> Buyer:
         return SmsPoolBuyer(provider)
     if isinstance(provider, TextVerified):
         return TextVerifiedBuyer(provider)
+    if isinstance(provider, _sms.SecureIoSms):
+        return SecureIoBuyer(provider)
     if isinstance(provider, (DaisySms, SmsActivateCompat)):
         return ActivateBuyer(provider)
     raise PurchaseRefused(f"{provider.name}: no purchase support for this protocol")

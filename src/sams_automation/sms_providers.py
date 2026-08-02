@@ -693,9 +693,81 @@ class SmsPva(Provider):
         )
 
 
+class SecureIoSms(Provider):
+    """secureiosms.com — key as a query param, service names rather than codes.
+
+    `/services_regions` returns every service with pricing per region, so the
+    Walmart entry is discoverable by name like most providers. Credits are
+    deducted at purchase rather than on delivery, but a cancel refunds them.
+    """
+
+    name = "secureiosms"
+    signup_url = "https://secureiosms.com/"
+    env_key = "SECUREIOSMS_API_KEY"
+    DEFAULT_BASE = "https://api.secureiosms.com"
+
+    def _call(self, path: str, **params: Any) -> Any:
+        return _request_json(
+            f"{self.base_url}/{path.lstrip('/')}",
+            params={"api_key": self.api_key, **params},
+        )
+
+    def fetch(self, terms: Sequence[str], us_only: bool) -> tuple[list[Offer], list[str]]:
+        data = self._call("services_regions")
+        offers: list[Offer] = []
+        for name, regions in _iter_services(data):
+            if not _matches(name, terms):
+                continue
+            for region, info in _iter_regions(regions):
+                if us_only and not _matches(region, ("us", "usa", "united states")):
+                    continue
+                offers.append(
+                    Offer(
+                        provider=self.name,
+                        service=str(name),
+                        service_code=str(name),  # /getnumber takes the name
+                        country=str(region),
+                        price=_as_float(_first(info, "price", "cost", "credits")),
+                        currency="USD",
+                        count=_as_int(_first(info, "count", "available", "stock", "quantity")),
+                        success_rate=_as_float(_first(info, "success_rate", "rate")),
+                    )
+                )
+        return offers, ["credits are deducted at purchase; a cancel refunds them"]
+
+
+def _iter_services(data: Any):
+    """Yield (service_name, regions) from either shape these APIs use."""
+    if isinstance(data, dict):
+        inner = data.get("services") or data.get("data") or data
+        if isinstance(inner, dict):
+            for name, regions in inner.items():
+                yield name, regions
+            return
+        data = inner
+    for entry in data or []:
+        if isinstance(entry, dict):
+            name = _first(entry, "service", "name", "service_name")
+            if name:
+                yield name, _first(entry, "regions", "countries", "pricing") or [entry]
+
+
+def _iter_regions(regions: Any):
+    """Yield (region_name, info) for a service's per-region pricing."""
+    if isinstance(regions, dict):
+        for region, info in regions.items():
+            yield region, (info if isinstance(info, dict) else {"price": info})
+        return
+    for entry in regions or []:
+        if isinstance(entry, dict):
+            yield str(_first(entry, "region", "country", "code") or "US"), entry
+
+
 PROVIDERS: dict[str, type[Provider]] = {
     cls.name: cls
-    for cls in (FiveSim, TextVerified, DaisySms, HeroSms, SmsPool, SmsPva)
+    for cls in (
+        FiveSim, TextVerified, DaisySms, HeroSms, SmsPool, SmsPva, SecureIoSms
+    )
 }
 
 # Adding a site usually needs no code — most resellers are clones of one of
@@ -709,6 +781,7 @@ PROTOCOLS: dict[str, type[Provider]] = {
     "smspool": SmsPool,
     "textverified": TextVerified,
     "smspva": SmsPva,
+    "secureiosms": SecureIoSms,
 }
 
 
@@ -767,7 +840,6 @@ KNOWN_ACTIVATE_HOSTS: dict[str, dict[str, str]] = {
 # probe them, rather than pretending they don't exist.
 UNKNOWN_PROTOCOL_SITES: dict[str, str] = {
     "verifysms": "https://www.verifysms.io",
-    "secureiosms": "https://secureiosms.com",
 }
 
 # Registry names already covered by a richer built-in adapter above (the
@@ -848,6 +920,27 @@ class ProbeResult:
         return bool(self.walmart)
 
 
+# Query parameters these APIs use to carry the key.
+SECRET_PARAMS: frozenset[str] = frozenset({"api_key", "apikey", "key", "token"})
+
+
+def _redact(text: str, secret: str = "") -> str:
+    """Strip API keys from anything destined for a human or a paste buffer.
+
+    Both the literal key (error bodies often echo the request URL) and any
+    key-bearing query parameter, since a provider may return a URL we never
+    constructed.
+    """
+    if secret and len(secret) > 3:
+        text = text.replace(secret, "REDACTED")
+    return re.sub(
+        r"((?:api_?key|token|(?<![a-z])key)=)[^&\s\"']+",
+        r"\1REDACTED",
+        text,
+        flags=re.I,
+    )
+
+
 @contextlib.contextmanager
 def record_http(sink: list[dict[str, Any]]):
     """Capture every HTTP call made inside the block, bodies included.
@@ -860,20 +953,23 @@ def record_http(sink: list[dict[str, Any]]):
     original = _request
 
     def recorder(url: str, **kw: Any) -> str:
+        params = kw.get("params") or {}
+        secret = str(params.get("api_key") or params.get("apikey") or params.get("key") or "")
         entry: dict[str, Any] = {
-            "url": url,
+            "url": _redact(url, secret),
             "method": kw.get("method", "GET"),
-            "params": {k: v for k, v in (kw.get("params") or {}).items() if k != "api_key"},
+            "params": {k: v for k, v in params.items() if k not in SECRET_PARAMS},
         }
         try:
             body = original(url, **kw)
         except ProviderError as e:
             entry["ok"] = False
-            entry["detail"] = str(e)[:300]
+            # Error text can echo the request URL, key and all.
+            entry["detail"] = _redact(str(e), secret)[:300]
             sink.append(entry)
             raise
         entry["ok"] = True
-        entry["detail"] = body[:300]
+        entry["detail"] = _redact(body, secret)[:300]
         sink.append(entry)
         return body
 

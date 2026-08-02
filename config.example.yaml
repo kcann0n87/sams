@@ -193,6 +193,11 @@ sms_providers:
     api_key: ""            # or export SMSPVA_API_KEY
     service_code: ""       # e.g. "opt99" — required; nothing safe to default to
 
+  # secureiosms.com — key as a query param, services named rather than coded,
+  # so Walmart is discovered by name like everywhere else.
+  secureiosms:
+    api_key: ""            # or export SECUREIOSMS_API_KEY
+
   # --- sites on the shared "activate" (handler_api) protocol ----------------
   # These need nothing but a key — the base URL is already registered. Set the
   # key here or export the variable shown by --list-providers:
