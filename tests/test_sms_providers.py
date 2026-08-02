@@ -80,12 +80,22 @@ def env(**overrides: str):
 
 
 def test_matches_handles_punctuation_and_case():
-    assert sp._matches("Walmart", ["walmart"])
-    assert sp._matches("WALMART Grocery", ["walmart"])
-    assert sp._matches("Sam's Club", ["sams club"])
-    assert sp._matches("sams_club", ["sam's club"])
+    assert sp._matches("Walmart", sp.DEFAULT_TERMS)
+    assert sp._matches("WALMART Grocery", sp.DEFAULT_TERMS)
+    assert sp._matches("walmart_us", sp.DEFAULT_TERMS)
+    assert sp._matches("Wal-Mart", sp.DEFAULT_TERMS)
     assert not sp._matches("Walgreens", sp.DEFAULT_TERMS)
     assert not sp._matches("Target", sp.DEFAULT_TERMS)
+    # Punctuation-insensitivity still works for a caller-supplied term.
+    assert sp._matches("Sam's Club", ["sams club"])
+
+
+def test_default_terms_are_walmart_only():
+    # Sam's Club is a separate service on these providers and isn't wanted here;
+    # anything else is opt-in per run via --term.
+    assert sp.DEFAULT_TERMS == ("walmart",)
+    assert not sp._matches("Sam's Club", sp.DEFAULT_TERMS)
+    assert not sp._matches("samsclub", sp.DEFAULT_TERMS)
 
 
 def test_offer_in_stock_semantics():

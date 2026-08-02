@@ -1,7 +1,7 @@
 # SMS verification providers — availability checker
 
 `sms-check` asks each provider whether it currently has numbers that can
-receive a **Walmart** (or Sam's Club) verification code, and what they cost.
+receive a **Walmart** verification code, and what they cost.
 It's read-only: it never buys a number.
 
 ```bash
@@ -101,8 +101,6 @@ Worth trying alongside it:
   US pool is dry.
 - **A wider net.** Stock is uncorrelated between resellers; the more keys
   registered, the better the odds any one of them catches a refill.
-- **Check Sam's Club separately.** It's matched by default but is often a
-  distinct service code with its own, sometimes healthier, pool.
 
 **A price is not a guarantee.** Every one of these is a resale pool. Stock and
 delivery rates swing hour to hour, which is the reason this is a checker you
@@ -136,9 +134,15 @@ If a provider ever starts mixing the two, that's a bug — the output should say
 
 Each provider names the service differently — `walmart`, `wm`, `1023` — and
 renumbers over time. So no code is hard-coded: each adapter pulls the
-provider's own catalog and keeps entries whose name matches `walmart` or
-`sam's club` (punctuation- and case-insensitive, so `Sam's Club`, `sams_club`
-and `SAMSCLUB` all hit).
+provider's own catalog and keeps entries whose name matches `walmart`. The
+match is case- and punctuation-insensitive, so `WALMART`, `Walmart Grocery` and
+`walmart_us` all hit without needing to be listed.
+
+To match something else for one run, pass `--term`:
+
+```bash
+python -m sams_automation sms-check --term walmart --term "walmart grocery"
+```
 
 The practical payoff: if a provider drops or renames the service, you get
 `no Walmart-like service found in this catalog` instead of a silent "0 in
@@ -295,5 +299,5 @@ client libraries rather than live calls:
 
 This tells you what's *purchasable*. It does not buy numbers, and ordering a
 number is a separate step against each provider's purchase endpoint. Whether
-using one is consistent with Walmart's or Sam's Club's terms is the same
-judgement call flagged in the main README.
+using one is consistent with Walmart's terms is the same judgement call
+flagged in the main README.

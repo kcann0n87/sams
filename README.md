@@ -127,8 +127,11 @@ Ctrl-C to stop. `--no-copy` disables the clipboard copy.
 
 Separate from the membership flow, `sms-check` polls SMS-verification providers
 (TextVerified, 5sim, DaisySMS, SMSPool, and a dozen sites on the shared
-"activate" protocol) and reports which ones actually have Walmart / Sam's Club
-numbers in stock, and at what price. It's read-only — it never buys a number.
+"activate" protocol) and reports which ones actually have Walmart numbers in
+stock, and at what price. It's read-only — it never buys a number.
+
+This part is standalone: it shares nothing with the Sam's Club membership flow
+above beyond living in the same repo.
 
 Easiest way in is the local web UI — a form for all the API keys, a live
 availability table, and a watch mode that alerts you when a pool refills:

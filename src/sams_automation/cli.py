@@ -550,7 +550,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--term",
         action="append",
         default=None,
-        help="Service name to match (repeatable). Default: walmart + sam's club.",
+        help="Service name to match (repeatable). Default: walmart.",
     )
     sc.add_argument(
         "--all-countries",

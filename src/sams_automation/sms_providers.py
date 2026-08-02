@@ -11,8 +11,7 @@ provider's own catalog and we keep the entries whose name looks like Walmart.
 That way a provider re-labelling the service doesn't silently return "0 in
 stock" — the honest answer of "not in the catalog" comes out instead.
 
-Sam's Club is a Walmart subsidiary but is usually listed as its own service, so
-the default search terms cover both.
+Walmart only. Extra services can be matched per-run with --term.
 """
 
 from __future__ import annotations
@@ -30,7 +29,9 @@ from typing import Any, Iterable, Sequence
 USER_AGENT = "sams-automation/0.1 (+sms availability check)"
 
 # What counts as "the Walmart service" when scanning a provider's catalog.
-DEFAULT_TERMS: tuple[str, ...] = ("walmart", "sams club", "sam's club", "samsclub")
+# Matching is loose (case- and punctuation-insensitive), so this also catches
+# "WALMART", "Walmart Grocery" and "walmart_us" without listing each.
+DEFAULT_TERMS: tuple[str, ...] = ("walmart",)
 
 
 # --------------------------------------------------------------------------

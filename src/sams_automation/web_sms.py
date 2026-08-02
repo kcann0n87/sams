@@ -2,7 +2,8 @@
 
 Entering a dozen API keys is miserable on the command line, so this is a form
 for it, plus a live availability table and a watch mode that keeps polling and
-alerts when a Walmart pool refills.
+alerts when a Walmart pool refills. Walmart only — nothing here is tied to the
+Sam's Club automation this package also ships.
 
 Keys are written to `sms_keys.json` (git-ignored, chmod 600) and are never sent
 back to the browser — the page only ever learns that a key is *set* and its
@@ -405,7 +406,8 @@ SMS_HTML = """<!doctype html>
     </div>
     <p class="note" id="hint" style="margin-bottom:0">
       Watch mode re-checks every 60s and alerts the moment a pool refills.
-      Leave this tab open — US Walmart stock appears in short windows.</p>
+      Leave this tab open — US Walmart stock appears in short windows.
+      Searches for <b>Walmart</b> only.</p>
   </div>
 
   <div class="card">
