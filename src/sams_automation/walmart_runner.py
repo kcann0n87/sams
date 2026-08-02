@@ -84,6 +84,15 @@ def run_add_phone(
     # Seconds to leave a failed account's window open. 0 closes immediately.
     hold_seconds = int((raw.get("walmart") or {}).get("hold_open_on_error_seconds", 60))
 
+    # Which sign-in path this run will take. manual_login makes the flow type
+    # nothing at all, which is indistinguishable from a broken selector unless
+    # it says so up front.
+    if wcfg.manual_login:
+        print("Sign-in: MANUAL — you sign in by hand, the run waits")
+    else:
+        code_setting = (wcfg.selectors or {}).get("login_use_code", "")
+        print(f"Sign-in: automatic ({'emailed code' if code_setting else 'password'})")
+
     print("Checking provider stock once for the whole run ...")
     pairs, _ = _providers_with_stock(config_path)
     live = sum(1 for _, r in pairs if r.ok and any(o.in_stock for o in r.offers))
