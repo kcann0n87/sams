@@ -289,6 +289,20 @@ walmart:
   login_url: "https://www.walmart.com/account/login"
   phone_url: "https://www.walmart.com/account/profile"
 
+  # Which browser to drive. Separate from the shared browser.channel above,
+  # because the Sam's Club flow needs real Chrome for its press-and-hold check
+  # and this flow may not.
+  #
+  #   "chromium"  -> Playwright's own build (already downloaded, no Chrome
+  #                  needed, and works cleanly with per-account proxies)
+  #   "chrome"    -> the Google Chrome installed on this machine. Harder for a
+  #                  bot check to flag, but it shares your real profile.
+  #
+  # Walmart uses PerimeterX, the same vendor as Sam's Club, so expect more
+  # challenges on chromium. The run pauses for you to solve them either way.
+  # Remove this line entirely to inherit browser.channel.
+  channel: "chromium"
+
   # --- Mailbox for the SIGN-IN code ------------------------------------------
   # At sign-in Walmart offers a password or an emailed one-time code. The flow
   # always takes the code, so it needs to read the catch-all this points at.
