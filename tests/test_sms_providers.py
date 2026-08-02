@@ -304,6 +304,60 @@ def test_smspool_no_walmart_service():
     assert report.ok and report.offers == []
 
 
+# --- handler path variants ------------------------------------------------
+
+
+def test_activate_handler_path_is_configurable():
+    # Not every clone serves the protocol from stubs/handler_api.php.
+    prov = sp.SmsActivateCompat(
+        {"name": "x", "base_url": "https://x.example", "api_key": "k",
+         "api_path": "app/api.php"}
+    )
+    assert prov._endpoint() == "https://x.example/app/api.php"
+
+
+def test_activate_default_path_is_unchanged():
+    prov = sp.SmsActivateCompat({"name": "x", "base_url": "https://x.example", "api_key": "k"})
+    assert prov._endpoint() == "https://x.example/stubs/handler_api.php"
+
+
+def test_pvacodes_uses_its_own_handler_path():
+    with env(PVACODES_API_KEY="k"):
+        built, _ = sp.build_providers({})
+    pv = {p.name: p for p in built}["pvacodes"]
+    assert pv._endpoint() == "https://beta.pvacodes.com/app/api.php"
+
+
+def test_probe_finds_the_protocol_on_a_non_default_path():
+    # Only app/api.php answers; the usual path 404s.
+    def fake(url, **kw):
+        if "app/api.php" not in url:
+            raise sp.ProviderError("HTTP 404: Not Found")
+        if (kw.get("params") or {}).get("action") == "getServicesList":
+            return json.dumps(DAISY_SERVICES)
+        return json.dumps(DAISY_PRICES)
+    sp._request = fake
+
+    results = sp.probe("https://newsite.example", "k", name="newsite")
+    winner = results[0]
+    assert winner.protocol == "sms-activate" and winner.sells_walmart
+
+
+def test_probe_still_prefers_the_default_path_when_both_work():
+    seen = []
+
+    def fake(url, **kw):
+        seen.append(url)
+        if (kw.get("params") or {}).get("action") == "getServicesList":
+            return json.dumps(DAISY_SERVICES)
+        return json.dumps(DAISY_PRICES)
+    sp._request = fake
+
+    sp.probe("https://both.example", "k")
+    assert "stubs/handler_api.php" in seen[0], "should try the common path first"
+    assert not any("app/api.php" in u for u in seen), "shouldn't keep looking after a hit"
+
+
 # --- smspva (its own protocol) --------------------------------------------
 
 
@@ -344,9 +398,12 @@ def test_smspva_is_reachable_as_a_protocol():
 def test_unknown_protocol_sites_are_named_not_hidden():
     # Real sites with real APIs we haven't identified — they must be listed so
     # they can be probed, not silently absent.
-    assert set(sp.UNKNOWN_PROTOCOL_SITES) == {"pvacodes", "verifysms", "secureiosms"}
+    assert set(sp.UNKNOWN_PROTOCOL_SITES) == {"verifysms", "secureiosms"}
     for name, url in sp.UNKNOWN_PROTOCOL_SITES.items():
         assert url.startswith("https://"), name
+    # A site graduates out of this list once its protocol is known.
+    assert "pvacodes" not in sp.UNKNOWN_PROTOCOL_SITES
+    assert "pvacodes" in sp.KNOWN_ACTIVATE_HOSTS
 
 
 # --- protocol probing -----------------------------------------------------

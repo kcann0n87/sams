@@ -202,7 +202,7 @@ key alone is enough, the base URL is already known:
 | grizzly-sms | `GRIZZLYSMS_API_KEY` | sms-acktiv | `SMS_ACKTIV_API_KEY` |
 | hero-sms | `HEROSMS_API_KEY` | simsms | `SIMSMS_API_KEY` |
 | daisy-sms | `DAISYSMS_API_KEY` | 5sim-activate | `FIVESIM_ACTIVATE_API_KEY` |
-| sms-activation | `SMS_ACTIVATION_SERVICE_API_KEY` | | |
+| sms-activation | `SMS_ACTIVATION_SERVICE_API_KEY` | pvacodes | `PVACODES_API_KEY` |
 
 Plus the four with dedicated adapters: `5sim` (no key), `textverified`
 (`TEXTVERIFIED_API_KEY` + `TEXTVERIFIED_USERNAME`), `daisysms`, `smspool`
@@ -285,7 +285,12 @@ sms_providers:
 ```
 
 Known protocols: `sms-activate` (alias `handler_api`), `5sim`, `smspool`,
-`textverified`. A bad entry reports itself as a config warning and the rest of
+`textverified`, `smspva`.
+
+The activate protocol isn't always at the same URL — SMS-Activate served it
+from `stubs/handler_api.php` and most clones copied that, but pvacodes uses
+`app/api.php`. Set `api_path` when a site differs; `sms-probe` tries the known
+paths automatically and tells you which one answered. A bad entry reports itself as a config warning and the rest of
 the run continues.
 
 A provider with no key is skipped rather than reported as failing. Without

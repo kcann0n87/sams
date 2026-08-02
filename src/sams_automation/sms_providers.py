@@ -432,6 +432,16 @@ class SmsActivateCompat(Provider):
     us_country_id = "187"
     prices_action = "getPrices"
 
+    # Where the handler lives. SMS-Activate put it at stubs/handler_api.php and
+    # most clones copied that, but not all — pvacodes serves the same protocol
+    # from app/api.php. Overridable per provider so a different path needs no
+    # code, only config.
+    DEFAULT_API_PATH = "stubs/handler_api.php"
+
+    @property
+    def api_path(self) -> str:
+        return str(self.settings.get("api_path") or self.DEFAULT_API_PATH).lstrip("/")
+
     def fetch(self, terms: Sequence[str], us_only: bool) -> tuple[list[Offer], list[str]]:
         notes: list[str] = []
         names = self._service_names(notes)
@@ -467,7 +477,7 @@ class SmsActivateCompat(Provider):
         return offers, notes
 
     def _endpoint(self) -> str:
-        return f"{self.base_url}/stubs/handler_api.php"
+        return f"{self.base_url}/{self.api_path}"
 
     def _prices(self, us_only: bool) -> dict[str, Any]:
         params = {"api_key": self.api_key, "action": self.prices_action}
@@ -709,6 +719,15 @@ PROTOCOLS: dict[str, type[Provider]] = {
 #                 network. A probe would read that as a match against any host.
 UNPROBEABLE: frozenset[str] = frozenset({"handler_api", "smspva"})
 
+# Paths the activate protocol is known to be served from, most common first.
+ACTIVATE_API_PATHS: tuple[str, ...] = (
+    "stubs/handler_api.php",
+    "app/api.php",
+    "handler_api.php",
+    "api.php",
+    "stubs/handler_api",
+)
+
 
 class UnknownProtocol(ValueError):
     pass
@@ -735,13 +754,18 @@ KNOWN_ACTIVATE_HOSTS: dict[str, dict[str, str]] = {
     "smshub": {"base_url": "https://smshub.org", "env": "SMSHUB_API_KEY"},
     "sms-acktiv": {"base_url": "https://sms-acktiv.ru", "env": "SMS_ACKTIV_API_KEY"},
     "simsms": {"base_url": "https://simsms.org", "env": "SIMSMS_API_KEY"},
+    # Same protocol, different handler path.
+    "pvacodes": {
+        "base_url": "https://beta.pvacodes.com",
+        "env": "PVACODES_API_KEY",
+        "api_path": "app/api.php",
+    },
 }
 
 # Sites confirmed to exist with a real API, but whose protocol we haven't
 # identified. Listed so `--list-providers` names them and the UI can offer to
 # probe them, rather than pretending they don't exist.
 UNKNOWN_PROTOCOL_SITES: dict[str, str] = {
-    "pvacodes": "https://beta.pvacodes.com",
     "verifysms": "https://www.verifysms.io",
     "secureiosms": "https://secureiosms.com",
 }
@@ -782,6 +806,7 @@ def build_known_activate(name: str, overrides: dict[str, Any] | None = None) -> 
             "name": name,
             "api_key": api_key,
             "base_url": overrides.get("base_url") or spec["base_url"],
+            "api_path": overrides.get("api_path") or spec.get("api_path"),
         }
     )
 
@@ -879,13 +904,25 @@ def probe(
     for protocol, cls in PROTOCOLS.items():
         if protocol in UNPROBEABLE:
             continue
-        provider = cls({"name": name, "base_url": base_url, "api_key": api_key})
-        if capture is not None:
-            with record_http(capture):
+        # The activate protocol is served from several different paths across
+        # clones, so try each rather than only the most common one.
+        paths = ACTIVATE_API_PATHS if cls is SmsActivateCompat else (None,)
+        report = None
+        for path in paths:
+            settings = {"name": name, "base_url": base_url, "api_key": api_key}
+            if path:
+                settings["api_path"] = path
+            provider = cls(settings)
+            if capture is not None:
+                with record_http(capture):
+                    report = provider.check(terms)
+            else:
                 report = provider.check(terms)
-        else:
-            report = provider.check(terms)
-        if report.ok:
+            if report.ok:
+                if path and path != SmsActivateCompat.DEFAULT_API_PATH:
+                    report.notes.append(f"served from /{path}")
+                break
+        if report is not None and report.ok:
             results.append(
                 ProbeResult(
                     protocol=protocol,
