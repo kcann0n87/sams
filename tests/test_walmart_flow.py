@@ -523,6 +523,81 @@ def test_an_explicit_selector_still_wins_over_the_search():
     assert page.clicked.count("#sendcode") == 1
 
 
+class CodeEntryPage(ChoicePage):
+    """The verify-it's-you screen, with a code field of a given shape."""
+
+    def __init__(self, *, field_selector="input[autocomplete='one-time-code']",
+                 boxes=0, **kw):
+        super().__init__(**kw)
+        self.field_selector = field_selector
+        self.boxes = boxes
+        self.typed: list[str] = []
+
+    def locator(self, selector):
+        page = self
+
+        class Field:
+            def __init__(self, index=0):
+                self.index = index
+
+            def is_visible(self):
+                return True
+
+            def fill(self, value):
+                page.typed.append(value)
+
+            def click(self):
+                page.clicked.append(f"element:{selector}")
+
+            def nth(self, i):
+                return Field(i)
+
+            def count(self):
+                return page.boxes if selector == "input[maxlength='1']" else 1
+
+        if selector == "input[maxlength='1']":
+            return Field()
+        if selector in (page.field_selector, *WalmartFlow.CODE_SUBMIT_SELECTORS):
+            return Field()
+        if selector in WalmartFlow.CODE_INPUT_SELECTORS:
+            class Empty:
+                def count(self):
+                    return 0
+            return Empty()
+        return super().locator(selector)
+
+
+def _code_flow(page):
+    return _flow(page, login_use_code="auto",
+                 login_code_input="auto", login_code_submit="auto")
+
+
+def test_the_code_field_is_found_when_it_is_not_the_expected_shape():
+    """Walmart's verify screen doesn't use autocomplete=one-time-code.
+
+    The shipped selector timed out on it for 30s, and the ids on that page are
+    React-generated so there is nothing stable to pin instead.
+    """
+    page = CodeEntryPage(field_selector="input[inputmode='numeric']")
+    result = add_phone_to_account(
+        _code_flow(page), ACCOUNT, lambda: (_purchase(), []),
+        fetch_email_code=lambda: "123456",
+    )
+    assert result.ok, result.error
+    assert page.typed == ["123456"]
+
+
+def test_a_segmented_code_field_gets_one_digit_per_box():
+    # A single fill would put all six characters in the first box.
+    page = CodeEntryPage(boxes=6)
+    result = add_phone_to_account(
+        _code_flow(page), ACCOUNT, lambda: (_purchase(), []),
+        fetch_email_code=lambda: "123456",
+    )
+    assert result.ok, result.error
+    assert page.typed == ["1", "2", "3", "4", "5", "6"]
+
+
 class StillOnLoginPage(FakePage):
     """Sign-in didn't take: every navigation lands back on the identity host."""
 

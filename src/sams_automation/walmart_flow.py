@@ -19,7 +19,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from .config import WalmartAccount
 
@@ -191,6 +191,81 @@ class WalmartFlow:
         print(f"    code option: {text!r}")
         return element
 
+    # Ordered best-first. A CSS list can't express preference — it returns
+    # whatever comes first in the DOM — so these are tried one at a time.
+    CODE_INPUT_SELECTORS = (
+        "input[autocomplete='one-time-code']",
+        "input[aria-label*='code' i]",
+        "input[name*='code' i]",
+        "input[id*='otp' i], input[name*='otp' i]",
+        "input[inputmode='numeric']",
+        "input[type='tel']",
+        "input[maxlength='6']",
+        # Last: Walmart masks the code on some screens, so the only field left
+        # looks like a password one.
+        "form input[type='password']",
+    )
+    CODE_SUBMIT_SELECTORS = (
+        "button[type='submit']",
+        "button:has-text('Verify')",
+        "button:has-text('Continue')",
+        "button:has-text('Submit')",
+    )
+
+    def _first_visible(self, selectors: Sequence[str]) -> Any | None:
+        """First visible element matching any of these, in preference order."""
+        for selector in selectors:
+            try:
+                located = self.page.locator(selector)
+                total = located.count()
+            except Exception:
+                continue
+            for index in range(min(total, 10)):
+                item = located.nth(index)
+                try:
+                    if item.is_visible():
+                        return item
+                except Exception:
+                    continue
+        return None
+
+    def enter_code(self, code: str) -> bool:
+        """Type the sign-in code and submit. False if no field was found.
+
+        Handles the segmented layout too — six boxes of one character each,
+        which a single fill would put the whole code into the first of.
+        """
+        explicit = str((self.cfg.selectors or {}).get("login_code_input", "")).strip()
+        if explicit and explicit.lower() != "auto":
+            self.page.fill(explicit, code)
+        else:
+            try:
+                boxes = self.page.locator("input[maxlength='1']")
+                segmented = boxes.count()
+            except Exception:
+                segmented = 0
+            if segmented >= len(code):
+                for position, digit in enumerate(code):
+                    boxes.nth(position).fill(digit)
+                print(f"    code entered across {len(code)} boxes")
+            else:
+                field = self._first_visible(self.CODE_INPUT_SELECTORS)
+                if field is None:
+                    return False
+                field.fill(code)
+                print("    code entered")
+
+        submit = str((self.cfg.selectors or {}).get("login_code_submit", "")).strip()
+        if submit and submit.lower() != "auto":
+            self.page.click(submit)
+            return True
+        button = self._first_visible(self.CODE_SUBMIT_SELECTORS)
+        if button is not None:
+            button.click()
+        # Some of these forms submit themselves once the last box is filled,
+        # so a missing button is not a failure.
+        return True
+
     def _code_target(self) -> Any | None:
         """The control to click for an emailed code, or None to use a password.
 
@@ -351,8 +426,20 @@ class WalmartFlow:
                     "no sign-in code arrived in the mailbox — check walmart.imap "
                     "and that the code actually went to this account's address"
                 )
-            self._fill("login_code_input", code)
-            self.page.click(self._sel("login_code_submit"))
+            if not self.enter_code(code):
+                # No field. Either the page moved on already — someone typed
+                # the code by hand while this was reading the mailbox — or the
+                # screen is one we can't recognise. Being off the identity host
+                # tells those apart.
+                self.settle()
+                if self.signed_out():
+                    self.dump("code-entry-not-found")
+                    raise FlowError(
+                        "couldn't find the code field on this screen — set "
+                        "walmart.selectors.login_code_input from "
+                        "screenshots/walmart-code-entry-not-found.html"
+                    )
+                print("    code field already gone — the page had moved on")
         else:
             if not account.password:
                 raise FlowError(

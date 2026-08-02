@@ -382,8 +382,11 @@ walmart:
     #   "<selector>" -> use exactly this, for when the search picks wrong.
     #   ""           -> don't look; type the password.
     login_use_code: "auto"
-    login_code_input: "input[autocomplete='one-time-code']"
-    login_code_submit: "button[type='submit']"
+    # Where the emailed code gets typed. "auto" tries a list of shapes
+    # best-first, because these ids are React-generated too, and handles the
+    # segmented layout (six one-character boxes) as well as a single field.
+    login_code_input: "auto"
+    login_code_submit: "auto"
     # Only used if login_use_code is empty.
     login_password: "input[type='password']"
     login_submit: "button[type='submit']"
