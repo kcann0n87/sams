@@ -62,14 +62,14 @@ def run_add_phone(
         print("No accounts to process.")
         return []
 
-    # Which browser binary to drive. The Sam's Club flow needs real Chrome for
-    # its bot check, so this is a separate setting rather than a shared one:
-    # "chromium" (or empty) uses Playwright's own build, "chrome" the installed
-    # Google Chrome. Unset here falls back to the shared browser.channel.
-    raw_channel = (raw.get("walmart") or {}).get("channel")
-    if raw_channel is None:
-        raw_channel = cfg.browser.channel
-    channel = (raw_channel or "").strip().lower()
+    # Which browser binary to drive. "chromium" (or empty) uses Playwright's
+    # own build, "chrome" the installed Google Chrome.
+    #
+    # Defaults to chromium rather than inheriting browser.channel: that setting
+    # exists for the Sam's Club flow, which needs real Chrome, and silently
+    # borrowing it launched Chrome here while the web UI reported chromium.
+    # A config written before this key existed would have hit exactly that.
+    channel = str((raw.get("walmart") or {}).get("channel") or "chromium").strip().lower()
     channel = None if channel in ("", "chromium") else channel
     print(f"Browser: {channel or 'chromium (Playwright build)'}")
 
