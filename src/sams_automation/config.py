@@ -165,11 +165,17 @@ def save_sms_key(
     username: str | None = None,
     *,
     enabled: bool | None = None,
+    protocol: str | None = None,
+    base_url: str | None = None,
     keys_path: str | Path = SMS_KEYS_FILE,
 ) -> None:
     """Write one provider's credentials to the keys file, creating it if needed.
 
     Only the fields passed are touched, so saving a username doesn't wipe a key.
+
+    `protocol` and `base_url` are what let the web UI add a provider the code
+    has never heard of: an entry carrying both is built as a custom adapter, so
+    a site discovered by probing survives a restart without editing YAML.
     """
     keys_path = Path(keys_path)
     data = _load_sms_keys(keys_path)
@@ -180,6 +186,10 @@ def save_sms_key(
         entry["username"] = username.strip()
     if enabled is not None:
         entry["enabled"] = bool(enabled)
+    if protocol is not None:
+        entry["protocol"] = protocol.strip()
+    if base_url is not None:
+        entry["base_url"] = base_url.strip().rstrip("/")
     data[provider] = entry
     keys_path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
     # Secrets: keep it readable only by the owner, best-effort (no-op on Windows).

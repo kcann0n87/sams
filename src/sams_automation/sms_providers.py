@@ -855,7 +855,16 @@ def build_providers(settings: dict[str, Any] | None) -> tuple[list[Provider], li
         if settings.get(name):
             problems.append(f"{name}: {reason}")
 
-    for entry in settings.get("custom") or []:
+    # A top-level entry carrying a `protocol` is a provider this code doesn't
+    # know built-in — added by the web UI after probing, or hand-written. Treat
+    # it exactly like a `custom:` entry so discovered sites survive a restart.
+    discovered = [
+        {**entry, "name": name}
+        for name, entry in settings.items()
+        if isinstance(entry, dict) and entry.get("protocol") and name not in seen
+    ]
+
+    for entry in list(settings.get("custom") or []) + discovered:
         if not isinstance(entry, dict):
             problems.append(f"custom entry must be a mapping, got: {entry!r}")
             continue

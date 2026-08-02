@@ -178,6 +178,15 @@ def provider_rows(config_path: str) -> list[dict[str, Any]]:
         if name in ACTIVATE_ALIASES:
             continue  # same site as a built-in adapter listed above
         add(name, spec["env"], "activate", True, False)
+
+    # Providers discovered by probing. Without this they'd be saved and working
+    # but invisible on the page that's supposed to list what's configured.
+    listed = {r["name"] for r in rows}
+    for name, entry in settings.items():
+        if not isinstance(entry, dict) or not entry.get("protocol") or name in listed:
+            continue
+        add(name, "", f"custom · {entry['protocol']}", True, False)
+        rows[-1]["base_url"] = str(entry.get("base_url") or "")
     for name, note in DEAD_PROVIDERS.items():
         rows.append(
             {
@@ -222,6 +231,48 @@ def register_sms_routes(app: Flask, config_path: str) -> None:
         except OSError as e:
             return jsonify(ok=False, error=str(e))
         return jsonify(ok=True)
+
+    @app.post("/api/sms/probe")
+    def api_sms_probe():
+        """Identify an unknown provider's protocol, and save it if one matches."""
+        from .sms_providers import probe
+
+        data = request.get_json(silent=True) or {}
+        name = str(data.get("name") or "").strip()
+        base_url = str(data.get("base_url") or "").strip().rstrip("/")
+        api_key = str(data.get("api_key") or "").strip()
+        if not name or not base_url:
+            return jsonify(ok=False, error="name and base URL are both required")
+        if not base_url.startswith(("http://", "https://")):
+            base_url = "https://" + base_url
+
+        calls: list[dict[str, Any]] = []
+        results = probe(base_url, api_key, name=name, capture=calls)
+        winner = next((r for r in results if r.sells_walmart), None) or next(
+            (r for r in results if r.ok), None
+        )
+
+        saved = False
+        if winner is not None:
+            save_sms_key(
+                name, api_key=api_key, protocol=winner.protocol, base_url=base_url
+            )
+            saved = True
+
+        return jsonify(
+            ok=True,
+            saved=saved,
+            protocol=winner.protocol if winner else None,
+            sells_walmart=bool(winner and winner.sells_walmart),
+            tried=[
+                {"protocol": r.protocol, "ok": r.ok, "detail": r.detail,
+                 "walmart": len(r.walmart)}
+                for r in results
+            ],
+            # api_key is stripped from captured params by record_http, so this
+            # is safe to show in the browser and safe for the user to share.
+            calls=calls,
+        )
 
     @app.post("/api/sms/check")
     def api_sms_check():
@@ -346,6 +397,21 @@ SMS_HTML = """<!doctype html>
       <th>Provider</th><th>Key</th><th>Status</th><th></th>
     </tr></thead><tbody id="provs"></tbody></table>
   </div>
+
+  <div class="card">
+    <h2>Add a provider that isn't listed</h2>
+    <p class="note">For a site with no adapter yet — Foones, or anything else.
+      Give it a name, its API base URL and your key, and it tries each protocol
+      it knows to work out which one the site speaks. If one matches it's saved
+      and appears above; nothing is purchased either way.</p>
+    <div class="row">
+      <input type="text" id="np-name" placeholder="name (e.g. foones)" style="max-width:180px">
+      <input type="text" id="np-url" placeholder="https://api.foones.com">
+      <input type="password" id="np-key" placeholder="API key" autocomplete="off">
+      <button class="primary" id="b-detect" onclick="detectProvider()">Detect</button>
+    </div>
+    <div id="probeout" style="margin-top:14px"></div>
+  </div>
 </main>
 <script>
 const $ = id => document.getElementById(id);
@@ -389,6 +455,49 @@ async function saveKey(name){
   if (keyEl) keyEl.value = '';
   if (!j.ok) alert('Save failed: ' + (j.error||'unknown'));
   loadProviders();
+}
+
+async function detectProvider(){
+  const name = $('np-name').value.trim(), url = $('np-url').value.trim();
+  const key = $('np-key').value.trim();
+  if (!name || !url){ $('probeout').innerHTML = '<div class="err">Name and base URL are required.</div>'; return; }
+  $('b-detect').disabled = true; $('b-detect').textContent = 'Detecting…';
+  $('probeout').innerHTML = '<p class="note">Trying each known protocol…</p>';
+  try {
+    const r = await fetch('/api/sms/probe', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name, base_url: url, api_key: key})});
+    const j = await r.json();
+    if (!j.ok){ $('probeout').innerHTML = `<div class="err">${j.error}</div>`; return; }
+
+    const tried = j.tried.map(t =>
+      `<tr class="${t.ok?'':'muted'}"><td>${t.protocol}</td>
+       <td>${t.ok ? (t.walmart ? `<span class="tag ok">${t.walmart} Walmart offer(s)</span>` : 'responded, no Walmart service') : ''}</td>
+       <td class="note">${t.ok ? '' : t.detail}</td></tr>`).join('');
+
+    let head;
+    if (j.saved && j.sells_walmart)
+      head = `<div class="verdict yes">✅ Match — speaks <b>${j.protocol}</b> and lists Walmart. Saved.</div>`;
+    else if (j.saved)
+      head = `<div class="verdict no">Speaks <b>${j.protocol}</b> but lists no Walmart service. Saved anyway.</div>`;
+    else
+      head = `<div class="verdict no">⛔ No match — this site speaks an API we don't know yet.
+        The requests below are what it was asked; a <b>401/403</b> means the path exists and
+        only the auth style is wrong, while 404 or HTML everywhere means the API is at a
+        different base URL. Your key is not included, so this is safe to share.</div>`;
+
+    const calls = (j.calls||[]).map(c =>
+      `<div style="margin:8px 0"><code class="env">${c.ok?'ok ':'ERR'} ${c.method} ${c.url}</code>
+       <div class="note" style="margin-left:12px">${(c.detail||'').replace(/</g,'&lt;')}</div></div>`).join('');
+
+    $('probeout').innerHTML = head +
+      `<table><thead><tr><th>Protocol</th><th>Result</th><th></th></tr></thead>
+       <tbody>${tried}</tbody></table>` +
+      (j.saved ? '' : `<details style="margin-top:12px"><summary>Every request tried (${(j.calls||[]).length})</summary>${calls}</details>`);
+    if (j.saved){ $('np-key').value = ''; loadProviders(); }
+  } finally {
+    $('b-detect').disabled = false; $('b-detect').textContent = 'Detect';
+  }
 }
 
 async function checkNow(){

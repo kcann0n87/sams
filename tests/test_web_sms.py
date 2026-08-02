@@ -197,6 +197,119 @@ def test_routes_and_key_masking():
         assert row["masked"] == "••••1234" and row["source"] == "saved"
 
 
+def test_probe_route_saves_a_matching_provider():
+    if not HAVE_FLASK:
+        print("SKIP: flask not installed in this env")
+        return
+    from sams_automation.config import load_sms_settings
+    from sams_automation.web import create_app
+
+    def fake(url, **kw):
+        if "getServicesList" in url:
+            return json.dumps({"services": [{"code": "wm", "name": "Walmart"}]})
+        if "handler_api" in url:
+            return json.dumps({"187": {"wm": {"cost": "0.5", "count": 9, "name": "Walmart"}}})
+        raise sp.ProviderError("HTTP 404: Not Found")
+    sp._request = fake
+
+    with workdir():
+        client = create_app("config.yaml", "accounts.csv").test_client()
+        r = client.post(
+            "/api/sms/probe",
+            json={"name": "foones", "base_url": "https://api.foones.com", "api_key": "k"},
+        ).get_json()
+        assert r["ok"] and r["saved"]
+        assert r["protocol"] == "sms-activate" and r["sells_walmart"]
+
+        # Persisted with enough detail to rebuild it after a restart...
+        entry = load_sms_settings("config.yaml")["foones"]
+        assert entry["protocol"] == "sms-activate"
+        assert entry["base_url"] == "https://api.foones.com"
+        # ...and it actually rebuilds.
+        built, problems = sp.build_providers(load_sms_settings("config.yaml"))
+        assert problems == [] and "foones" in {p.name for p in built}
+        # ...and shows up in the UI listing.
+        names = {p["name"] for p in client.get("/api/sms/providers").get_json()["providers"]}
+        assert "foones" in names
+
+
+def test_probe_route_reports_no_match_without_saving():
+    if not HAVE_FLASK:
+        print("SKIP: flask not installed in this env")
+        return
+    from sams_automation.config import load_sms_settings
+    from sams_automation.web import create_app
+
+    def fake(url, **kw):
+        raise sp.ProviderError("HTTP 404: Not Found")
+    sp._request = fake
+
+    with workdir():
+        client = create_app("config.yaml", "accounts.csv").test_client()
+        r = client.post(
+            "/api/sms/probe",
+            json={"name": "mystery", "base_url": "https://api.mystery.com", "api_key": "k"},
+        ).get_json()
+        assert r["ok"] and not r["saved"] and r["protocol"] is None
+        assert r["calls"], "the failed requests are the diagnostic value"
+        assert "mystery" not in load_sms_settings("config.yaml")
+
+
+def test_probe_route_never_returns_the_api_key():
+    if not HAVE_FLASK:
+        print("SKIP: flask not installed in this env")
+        return
+    from sams_automation.web import create_app
+
+    def fake(url, **kw):
+        raise sp.ProviderError("HTTP 404: Not Found")
+    sp._request = fake
+
+    with workdir():
+        client = create_app("config.yaml", "accounts.csv").test_client()
+        body = client.post(
+            "/api/sms/probe",
+            json={"name": "m", "base_url": "https://x.com", "api_key": "SUPERSECRET1234"},
+        ).get_data(as_text=True)
+        assert "SUPERSECRET1234" not in body, "probe response leaked the key"
+
+
+def test_probe_route_requires_name_and_url():
+    if not HAVE_FLASK:
+        print("SKIP: flask not installed in this env")
+        return
+    from sams_automation.web import create_app
+
+    with workdir():
+        client = create_app("config.yaml", "accounts.csv").test_client()
+        assert not client.post("/api/sms/probe", json={"name": "x"}).get_json()["ok"]
+        assert not client.post(
+            "/api/sms/probe", json={"base_url": "https://x.com"}
+        ).get_json()["ok"]
+
+
+def test_probe_route_adds_scheme_when_missing():
+    if not HAVE_FLASK:
+        print("SKIP: flask not installed in this env")
+        return
+    from sams_automation.config import load_sms_settings
+    from sams_automation.web import create_app
+
+    def fake(url, **kw):
+        if "handler_api" in url:
+            return json.dumps({"187": {"wm": {"cost": "0.5", "count": 1, "name": "Walmart"}}})
+        raise sp.ProviderError("HTTP 404")
+    sp._request = fake
+
+    with workdir():
+        client = create_app("config.yaml", "accounts.csv").test_client()
+        client.post(
+            "/api/sms/probe",
+            json={"name": "bare", "base_url": "api.example.com", "api_key": "k"},
+        )
+        assert load_sms_settings("config.yaml")["bare"]["base_url"] == "https://api.example.com"
+
+
 def test_key_route_rejects_missing_provider():
     if not HAVE_FLASK:
         print("SKIP: flask not installed in this env")
