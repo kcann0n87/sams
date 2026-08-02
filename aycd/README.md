@@ -148,18 +148,18 @@ pays more for presumably better stock. Both are left at their defaults.
 The activate protocol pointed at `smsbower.online`, so it needs no host edit —
 unlike `activate-protocol.json`, which ships aimed at DaisySMS.
 
-**The service code is blank**, because these differ per site even though the
-protocol doesn't. Find SMSBower's code for Walmart by adding the key to this
-repo and asking:
+Walmart is `wr`, country `187`. Confirmed against their live catalogue, which
+reported **40,091 numbers in stock at $0.83** — the only provider here that
+gives a real count rather than saying "available".
+
+Service codes differ per site even though the protocol doesn't, so for any
+other service, add the key to this repo and ask:
 
 ```
 .venv/bin/python -m sams_automation sms-plan
 ```
 
-Every pool it lists shows its service code in brackets. Put SMSBower's into
-the config's `service` value.
-
-Country `187` is the United States across this whole family.
+Every pool it lists shows its code in brackets.
 
 ### activate-protocol.json
 One schema for a dozen sites — they all clone `handler_api.php`. **Edit the

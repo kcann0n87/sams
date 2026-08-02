@@ -1,6 +1,6 @@
 {
   "name": "SMSBower",
-  "description": "smsbower.online — handler_api.php protocol, plain-text responses",
+  "description": "smsbower.online \u2014 handler_api.php protocol, plain-text responses",
   "version": "1.0.0",
   "author": "sams-automation",
   "priceFormat": "USD",
@@ -27,8 +27,9 @@
       {
         "name": "service",
         "label": "Service Code",
-        "description": "SMSBower's short code for the service. Check its own service list — these differ between sites even though the protocol doesn't.",
-        "required": true
+        "description": "SMSBower's short code for the service. Walmart is wr. These differ between sites even though the protocol doesn't.",
+        "required": true,
+        "defaultValue": "wr"
       },
       {
         "name": "country",
@@ -40,10 +41,10 @@
     ],
     "userDataConfigs": [
       {
-        "name": "US — set the service code",
+        "name": "US Walmart",
         "values": {
           "country": "187",
-          "service": ""
+          "service": "wr"
         }
       }
     ],
