@@ -1,0 +1,112 @@
+{
+  "name": "CyberYozh",
+  "description": "app.cyberyozh.com — residential and virtual numbers, X-Api-Key header",
+  "version": "0.9.0",
+  "author": "sams-automation",
+  "priceFormat": "USD",
+  "credentials": [
+    {
+      "name": "apiKey",
+      "label": "API Key",
+      "description": "app.cyberyozh.com > profile menu > API Keys",
+      "required": true
+    }
+  ],
+  "tempApi": {
+    "userDataFields": [
+      {
+        "name": "provider",
+        "label": "Provider type",
+        "description": "residential is non-VoIP and the better bet for retail sites. virtual is cheaper. Rentals are the _rent variants — not what you want for one code.",
+        "required": true,
+        "defaultValue": "residential"
+      },
+      {
+        "name": "service",
+        "label": "Service code",
+        "description": "The short code from GET /numbers/services/, e.g. tg for Telegram",
+        "required": true
+      },
+      {
+        "name": "country",
+        "label": "Country code",
+        "description": "Numeric code from GET /numbers/countries/",
+        "required": true
+      },
+      {
+        "name": "period",
+        "label": "Period",
+        "description": "MIN_15 is the only value for virtual and residential. Rentals take HOUR_4, DAY, WEEK and so on.",
+        "required": true,
+        "defaultValue": "MIN_15"
+      }
+    ],
+    "userDataConfigs": [
+      {
+        "name": "Walmart — residential (fill in the codes)",
+        "values": {
+          "provider": "residential",
+          "service": "",
+          "country": "",
+          "period": "MIN_15"
+        }
+      },
+      {
+        "name": "Walmart — virtual (fill in the codes)",
+        "values": {
+          "provider": "virtual",
+          "service": "",
+          "country": "",
+          "period": "MIN_15"
+        }
+      }
+    ],
+    "getPhoneNumber": {
+      "method": "POST",
+      "url": "https://app.cyberyozh.com/api/v1/numbers/",
+      "headers": {
+        "X-Api-Key": "${credentials.apiKey}",
+        "accept": "application/json"
+      },
+      "body": {
+        "provider": "${userData.provider}",
+        "service_code": "${userData.service}",
+        "country_code": "${userData.country}",
+        "period": "${userData.period}",
+        "need_fraud_score": false,
+        "markup_percent": 0
+      },
+      "contentType": "application/json",
+      "responseType": "JSON",
+      "responseMapping": {
+        "phoneNumber": "$.phone_number",
+        "orderId": "$.pk"
+      },
+      "errorCheck": {
+        "path": "$.detail",
+        "messageField": "$.detail"
+      },
+      "rateLimit": {
+        "maxConcurrency": 1,
+        "delayMillis": 1000
+      }
+    },
+    "getMessage": {
+      "method": "GET",
+      "url": "https://app.cyberyozh.com/api/v1/numbers/",
+      "headers": {
+        "X-Api-Key": "${credentials.apiKey}",
+        "accept": "application/json"
+      },
+      "responseType": "JSON",
+      "responseMapping": {
+        "message": "$[0].history_sms_code"
+      },
+      "pendingCheck": {
+        "type": "FIELD_ABSENT",
+        "path": "$[0].history_sms_code"
+      },
+      "pollingIntervalSeconds": 5
+    }
+  }
+}

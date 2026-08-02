@@ -14,6 +14,7 @@ browser flow in the rest of this repo, and nothing to do with bot checks.
 | `secureiosms.json` | secureiosms.com | No — bespoke API |
 | `smspool.json` | smspool.net | Possibly |
 | `activate-protocol.json` | DaisySMS, HeroSMS, tiger-sms, smsbower, grizzly-sms, sms-acktiv, simsms, smshub | Some |
+| `cyberyozh.json` | app.cyberyozh.com | No — and it sells **residential** numbers |
 
 ## How much to trust these
 
@@ -81,6 +82,50 @@ convention rather than observation.
 Their US-only filtering deserves care: this project found that matching
 country names loosely lets Australia, Austria, Belarus, Cyprus, Mauritius and
 Russia through, because each contains "us". Pick the country by id.
+
+### cyberyozh.json — INCOMPLETE, read this first
+
+Version 0.9.0 because two values are still blank and one endpoint is a guess.
+
+**Fill in before use.** Both configs ship with `service` and `country` empty.
+Get them from `GET /api/v1/numbers/services/` and
+`GET /api/v1/numbers/countries/` — the `code` field of each, not the name.
+
+**The poll is the guess.** There may be no detail route for a single order, so
+`getMessage` reads `history_sms_code` off the **first** entry of the active
+orders list. That is fine when you buy one number at a time and wrong when you
+don't — with two orders in flight, the code from one could be handed to the
+other. If a detail route like `/api/v1/numbers/{pk}/` exists, use it:
+
+```json
+"url": "https://app.cyberyozh.com/api/v1/numbers/${session.orderId}/",
+"responseMapping": {"message": "$.history_sms_code"},
+"pendingCheck": {"type": "FIELD_ABSENT", "path": "$.history_sms_code"}
+```
+
+There is also a risk the order **leaves** the active list once its code
+arrives — that endpoint is documented as returning orders "currently awaiting
+an SMS code", and completed ones move to `GET /history/`. If polling never
+completes, that's why, and the detail route or `/history/` is the fix.
+
+**No cancel yet.** The order object has `can_cancel`, so a route exists, but
+it isn't in what I've seen of the docs. Without `cancelPhoneNumber` an unused
+number isn't refunded — it just expires.
+
+**Why bother:** `provider` accepts `residential`, which is non-VoIP. Walmart
+rejects a large share of VoIP numbers, so residential stock is a materially
+better bet than the cheap virtual pools, and none of the other providers here
+offer it. Pair it with `period: MIN_15`, which is the only period valid for
+one-time numbers — the `_rent` variants are rentals and not what you want for
+a single code.
+
+Errors are distinct and worth knowing: `402` insufficient balance, `400`
+validation or no numbers available, `429` rate limited. Auth is the
+`X-Api-Key` header; `"API key header is required."` means it wasn't sent at
+all, `"Invalid API key provided."` means it was sent and rejected.
+
+`need_fraud_score` requests a fraud check on the number, and `markup_percent`
+pays more for presumably better stock. Both are left at their defaults.
 
 ### activate-protocol.json
 One schema for a dozen sites — they all clone `handler_api.php`. **Edit the
