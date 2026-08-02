@@ -169,6 +169,83 @@ def test_login_marker_failure_stops_before_buying():
     assert "signed-in" in result.error
 
 
+# --- sign-in via emailed code ---------------------------------------------
+
+
+def test_emailed_code_is_preferred_over_the_password():
+    page = FakePage()
+    flow = _flow(page, login_use_code="#sendcode",
+                 login_code_input="#logincode", login_code_submit="#loginverify")
+    result = add_phone_to_account(
+        flow, ACCOUNT, lambda: (_purchase(), []), fetch_email_code=lambda: "998877"
+    )
+    assert result.ok, result.error
+    assert result.login_method == "code"
+    assert page.filled["#logincode"] == "998877"
+    assert "#password" not in page.filled, "typed the password despite the code option"
+    assert page.clicked[0] == "#sendcode"
+
+
+def test_password_is_used_when_no_code_option_is_configured():
+    page = FakePage()
+    result = add_phone_to_account(_flow(page), ACCOUNT, lambda: (_purchase(), []))
+    assert result.login_method == "password"
+    assert page.filled["#password"] == "pw"
+
+
+def test_code_option_is_skipped_when_no_mailbox_reader_is_supplied():
+    # Configured to use a code but nothing can read the mailbox: fall back
+    # rather than hanging on a code that will never be fetched.
+    page = FakePage()
+    flow = _flow(page, login_use_code="#sendcode")
+    result = add_phone_to_account(flow, ACCOUNT, lambda: (_purchase(), []))
+    assert result.login_method == "password"
+
+
+def test_no_signin_code_arriving_is_explained():
+    flow = _flow(FakePage(), login_use_code="#sendcode")
+    result = add_phone_to_account(
+        flow, ACCOUNT, lambda: (_purchase(), []), fetch_email_code=lambda: ""
+    )
+    assert not result.ok
+    assert "walmart.imap" in result.error
+
+
+def test_a_mailbox_failure_does_not_spend_money():
+    bought = []
+
+    def acquire():
+        bought.append(1)
+        return _purchase(), []
+
+    def fetch():
+        raise RuntimeError("IMAP login failed")
+
+    flow = _flow(FakePage(), login_use_code="#sendcode")
+    result = add_phone_to_account(flow, ACCOUNT, acquire, fetch_email_code=fetch)
+    assert not result.ok and not bought
+    assert "IMAP login failed" in result.error
+
+
+def test_account_without_a_password_still_works_via_code():
+    # Code-only accounts are legitimate; only the password path needs one.
+    page = FakePage()
+    flow = _flow(page, login_use_code="#sendcode",
+                 login_code_input="#logincode", login_code_submit="#loginverify")
+    nopass = WalmartAccount(email="a@example.com", password="")
+    result = add_phone_to_account(
+        flow, nopass, lambda: (_purchase(), []), fetch_email_code=lambda: "112233"
+    )
+    assert result.ok, result.error
+
+
+def test_account_without_a_password_and_no_code_path_is_explained():
+    nopass = WalmartAccount(email="a@example.com", password="")
+    result = add_phone_to_account(_flow(FakePage()), nopass, lambda: (_purchase(), []))
+    assert not result.ok
+    assert "login_use_code" in result.error
+
+
 # --- failures -------------------------------------------------------------
 
 
@@ -235,41 +312,61 @@ def test_login_continue_is_skipped_when_blank():
 # --- accounts file --------------------------------------------------------
 
 
-def test_accounts_load_from_csv():
+def _accounts(text: str):
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "wm.csv"
-        path.write_text(
-            "email,password,proxy,notes\n"
-            "a@example.com,pw1,1.2.3.4:8080,first\n"
-            "\n"                                   # blank padding row
-            "b@example.com,pw2,,\n"
-        )
-        accounts = load_walmart_accounts(path)
+        path.write_text(text)
+        return load_walmart_accounts(path)
+
+
+def test_accounts_accept_comma_form():
+    accounts = _accounts("email,password\na@example.com,pw1\n")
+    assert [(a.email, a.password) for a in accounts] == [("a@example.com", "pw1")]
+
+
+def test_accounts_accept_colon_form():
+    accounts = _accounts("a@example.com:pw1\n")
+    assert [(a.email, a.password) for a in accounts] == [("a@example.com", "pw1")]
+
+
+def test_accounts_accept_a_mix_with_no_header():
+    accounts = _accounts("a@example.com,pw1\nb@example.com:pw2\n")
     assert [a.email for a in accounts] == ["a@example.com", "b@example.com"]
-    assert accounts[0].proxy == "1.2.3.4:8080"
-    assert accounts[1].proxy == ""
 
 
-def test_accounts_missing_column_is_explained():
-    with tempfile.TemporaryDirectory() as d:
-        path = Path(d) / "wm.csv"
-        path.write_text("email,notes\na@example.com,x\n")
-        try:
-            load_walmart_accounts(path)
-            assert False, "should have raised"
-        except ValueError as e:
-            assert "password" in str(e)
+def test_accounts_keep_optional_proxy_and_notes():
+    accounts = _accounts("a@example.com,pw1,1.2.3.4:8080,first\nb@example.com,pw2\n")
+    assert accounts[0].proxy == "1.2.3.4:8080" and accounts[0].notes == "first"
+    assert accounts[1].proxy == "" and accounts[1].notes == ""
 
 
-def test_account_without_a_password_is_rejected():
-    with tempfile.TemporaryDirectory() as d:
-        path = Path(d) / "wm.csv"
-        path.write_text("email,password\na@example.com,\n")
-        try:
-            load_walmart_accounts(path)
-            assert False, "should have raised"
-        except ValueError as e:
-            assert "a@example.com" in str(e)
+def test_accounts_skip_blanks_comments_and_headers():
+    accounts = _accounts(
+        "email,password\n\n# a comment\na@example.com,pw1\n\n"
+    )
+    assert len(accounts) == 1
+
+
+def test_bad_lines_are_skipped_not_fatal():
+    # One typo in a long pasted list must not lose the other 4,999.
+    accounts = _accounts("a@example.com,pw1\nnotanemail,pw\nc@example.com:pw3\n")
+    assert [a.email for a in accounts] == ["a@example.com", "c@example.com"]
+
+
+def test_email_only_lines_are_accepted():
+    # Code-based sign-in needs no password, so an email alone is a valid row.
+    accounts = _accounts("a@example.com\nb@example.com,pw2\n")
+    assert [(a.email, a.password) for a in accounts] == [
+        ("a@example.com", ""), ("b@example.com", "pw2")
+    ]
+
+
+def test_a_file_with_nothing_usable_explains_the_format():
+    try:
+        _accounts("garbage\nmore garbage\n")
+        assert False, "should have raised"
+    except ValueError as e:
+        assert "email" in str(e) and "password is optional" in str(e)
 
 
 def test_missing_accounts_file_points_at_the_example():

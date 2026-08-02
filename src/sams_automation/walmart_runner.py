@@ -72,21 +72,43 @@ def run_add_phone(
         max_total_usd=pcfg.max_total_usd,
     )
 
+    # Walmart gets its own proxy list, defaulting to walmart_proxies.txt: these
+    # are residential IPs for a different site than the Sam's Club flow uses,
+    # and "fresh" means a big pool never puts two accounts behind one IP.
+    wproxy = (raw.get("walmart") or {}).get("proxies") or {}
     pool = None
-    if cfg.proxies.enabled and not cfg.browser.user_data_dir:
-        proxies = load_proxies(cfg.proxies.file)
+    if wproxy.get("enabled", True):
+        proxy_file = wproxy.get("file") or "walmart_proxies.txt"
+        rotation = wproxy.get("rotation", "fresh")
+        try:
+            proxies = load_proxies(proxy_file, report=True)
+        except FileNotFoundError as e:
+            print(f"  {e}")
+            proxies = []
         if proxies:
-            pool = ProxyPool(proxies, cfg.proxies.rotation)
+            pool = ProxyPool(proxies, rotation)
+            print(f"  rotation: {rotation}\n")
+        else:
+            print("  running without proxies\n")
 
     results: list[AccountResult] = []
     with sync_playwright() as pw:
         for index, account in enumerate(accounts):
             proxy = None
-            if pool is not None:
+            # An explicit proxy on the row wins; otherwise draw from the pool.
+            if account.proxy:
+                from .proxies import parse_proxy_line
+
+                chosen = parse_proxy_line(account.proxy)
+                proxy = chosen.to_playwright()
+                print(f"  {account.email}: via {chosen.label} (from the CSV row)")
+            elif pool is not None:
                 chosen = pool.for_account(account.email)
                 proxy = chosen.to_playwright() if chosen else None
                 if chosen:
                     print(f"  {account.email}: via {chosen.label}")
+                if pool.exhausted:
+                    print("    (pool wrapped around — IPs are being reused)")
 
             browser = pw.chromium.launch(
                 headless=headless,
@@ -108,7 +130,10 @@ def run_add_phone(
                         ),
                     )
 
-                result = add_phone_to_account(flow, account, acquire)
+                def fetch_login_code(_account=account):
+                    return _read_signin_code(raw.get("walmart"), _account.email)
+
+                result = add_phone_to_account(flow, account, acquire, fetch_login_code)
             except Exception as e:  # noqa: BLE001 - one account must not kill the run
                 result = AccountResult(account.email, False, error=f"{type(e).__name__}: {e}")
             finally:
@@ -130,6 +155,70 @@ def run_add_phone(
     ok = sum(1 for r in results if r.ok)
     print(f"Done: {ok}/{len(results)} account(s) got a number. Spent ${budget.spent:.2f}.")
     return results
+
+
+def walmart_imap_config(raw: dict[str, Any] | None):
+    """Build the IMAP + code-extraction config for Walmart's sign-in email.
+
+    Separate from the top-level `imap:` block, which is the iCloud catch-all the
+    Sam's Club flow uses. Walmart's accounts sit on a different mailbox and the
+    sender filter differs, so sharing one config would break both.
+    """
+    from .config import ImapConfig, VerificationConfig
+
+    section = ((raw or {}).get("imap")) or {}
+    if not section.get("username"):
+        return None, None
+    imap = ImapConfig(
+        host=section.get("host", "imap.gmail.com"),
+        port=int(section.get("port", 993)),
+        ssl=bool(section.get("ssl", True)),
+        username=section["username"],
+        password=section.get("password", ""),
+        mailbox=section.get("mailbox", "INBOX"),
+        from_contains=[s.lower() for s in section.get("from_contains", ["walmart"])],
+        timeout_seconds=int(section.get("timeout_seconds", 180)),
+        poll_interval_seconds=int(section.get("poll_interval_seconds", 5)),
+    )
+    verification = VerificationConfig(
+        mode="code",
+        code_regex=section.get("code_regex", r"\b(\d{6})\b"),
+        link_regex=section.get("link_regex", ""),
+    )
+    return imap, verification
+
+
+def _read_signin_code(raw_walmart: dict[str, Any] | None, to_address: str) -> str:
+    """Wait for Walmart's sign-in code to land, and return it.
+
+    Only messages that arrive after the request was made are considered, so a
+    code from a previous run can't be replayed into this one.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from .imap_client import ImapClient, VerificationTimeout
+
+    imap_cfg, verification = walmart_imap_config(raw_walmart)
+    if imap_cfg is None:
+        raise RuntimeError(
+            "the emailed sign-in code is configured but walmart.imap has no "
+            "username — fill in the Gmail catch-all in config.yaml"
+        )
+
+    # A small backdate absorbs clock skew without reaching back to older codes.
+    since = datetime.now(timezone.utc) - timedelta(seconds=90)
+    client = ImapClient(imap_cfg)
+    client.connect()
+    try:
+        print(f"    waiting for the sign-in code emailed to {to_address} ...")
+        result = client.wait_for_verification(
+            to_address=to_address, since=since, verification=verification
+        )
+    except VerificationTimeout as e:
+        raise RuntimeError(f"no sign-in code arrived: {e}") from None
+    finally:
+        client.close()
+    return result.code or ""
 
 
 def _record(path: str | Path, result: AccountResult) -> None:

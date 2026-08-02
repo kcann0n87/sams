@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from sams_automation.proxies import (  # noqa: E402
     Proxy,
     ProxyPool,
+    load_proxies,
     parse_proxy_line,
 )
 
@@ -101,6 +102,62 @@ def _run_all():
             print(f"FAIL {fn.__name__}: {e}")
     print(f"\n{len(fns) - failed}/{len(fns)} passed")
     return 1 if failed else 0
+
+
+def test_fresh_rotation_never_repeats_until_the_pool_wraps():
+    pool = ProxyPool([Proxy(server=f"http://10.0.0.{i}:8080") for i in range(5)], "fresh")
+    picked = [pool.for_account(f"a{i}@x.com").server for i in range(5)]
+    assert len(set(picked)) == 5, "an IP was reused before the pool ran out"
+    assert not pool.exhausted
+    pool.for_account("a6@x.com")
+    assert pool.exhausted, "wrap-around should be reported"
+
+
+def test_fresh_rotation_ignores_the_account_key():
+    # Unlike sticky, the same account must not keep getting the same IP.
+    pool = ProxyPool([Proxy(server=f"http://10.0.0.{i}:8080") for i in range(50)], "fresh")
+    picked = {pool.for_account("same@x.com").server for _ in range(10)}
+    assert len(picked) == 10
+
+
+def test_unknown_rotation_is_rejected_at_construction():
+    try:
+        ProxyPool([Proxy(server="http://1.2.3.4:8080")], "nonsense")
+        assert False, "should have raised"
+    except ValueError as e:
+        assert "fresh" in str(e)
+
+
+def test_load_skips_bad_lines_and_dedupes():
+    import tempfile
+    from pathlib import Path as _P
+
+    with tempfile.TemporaryDirectory() as d:
+        path = _P(d) / "p.txt"
+        path.write_text(
+            "# comment\n"
+            "1.2.3.4:8080\n"
+            "1.2.3.4:8080\n"          # exact duplicate
+            "garbage-with-no-port\n"  # unparseable
+            "\n"
+            "5.6.7.8:3128:user:pass\n"
+        )
+        proxies = load_proxies(path)
+    assert [p.label for p in proxies] == ["1.2.3.4:8080", "5.6.7.8:3128"]
+
+
+def test_load_handles_a_large_list():
+    import tempfile
+    from pathlib import Path as _P
+
+    with tempfile.TemporaryDirectory() as d:
+        path = _P(d) / "p.txt"
+        path.write_text("\n".join(f"10.{i // 256}.{i % 256}.1:8080" for i in range(5000)))
+        proxies = load_proxies(path)
+    assert len(proxies) == 5000
+    pool = ProxyPool(proxies, "fresh")
+    assert len({pool.for_account(f"a{i}@x.com").server for i in range(100)}) == 100
+
 
 
 if __name__ == "__main__":

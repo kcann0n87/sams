@@ -123,11 +123,19 @@ REQUIRED_WALMART_COLUMNS = ["email", "password"]
 
 
 def load_walmart_accounts(path: str | Path) -> list[WalmartAccount]:
-    """Read walmart_accounts.csv.
+    """Read the Walmart account list, in whatever shape it's written.
 
-    Kept separate from load_accounts(): these are Walmart logins receiving a
-    phone number, not Sam's Club memberships gaining a secondary member. The
-    two files have nothing in common but the CSV format.
+    All of these work, mixed freely, with or without a header row:
+
+        email
+        email,password
+        email:password
+        email,password,proxy,notes
+
+    Deliberately forgiving. The realistic input is a list pasted from
+    somewhere else, and rejecting it over a missing header or an extra column
+    is friction for no benefit — the only thing actually required is an
+    address and a password.
     """
     path = Path(path)
     if not path.exists():
@@ -135,33 +143,50 @@ def load_walmart_accounts(path: str | Path) -> list[WalmartAccount]:
             f"Walmart account list not found: {path}. "
             "Copy walmart_accounts.example.csv to it and fill it in."
         )
-    with path.open(newline="") as fh:
-        reader = csv.DictReader(fh)
-        headers = [h.strip() for h in (reader.fieldnames or [])]
-        missing = [c for c in REQUIRED_WALMART_COLUMNS if c not in headers]
-        if missing:
-            raise ValueError(
-                f"{path} is missing required column(s): {', '.join(missing)}. "
-                f"Found: {', '.join(headers) or '(none)'}"
+
+    accounts: list[WalmartAccount] = []
+    problems: list[str] = []
+    for lineno, raw in enumerate(path.read_text().splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        # A header line names the columns rather than holding data.
+        low = line.lower().replace(" ", "")
+        if low.startswith("email,password") or low.startswith("email:password"):
+            continue
+
+        # Comma wins when present; otherwise colon. An email has no comma, and
+        # no colon before the separator, so the first one is the divider.
+        fields = [f.strip() for f in (line.split(",") if "," in line else line.split(":", 1))]
+        email = fields[0] if fields else ""
+        password = fields[1] if len(fields) > 1 else ""
+        if not email or "@" not in email:
+            problems.append(f"line {lineno}: no email address in {line[:40]!r}")
+            continue
+        # A password is optional: signing in with the emailed one-time code
+        # doesn't need one, and that's the preferred path.
+        accounts.append(
+            WalmartAccount(
+                email=email,
+                password=password,
+                proxy=fields[2].strip() if len(fields) > 2 else "",
+                notes=fields[3].strip() if len(fields) > 3 else "",
             )
-        accounts = []
-        for lineno, row in enumerate(reader, start=2):
-            email = (row.get("email") or "").strip()
-            if not email:
-                continue  # blank padding rows are common in exported CSVs
-            password = (row.get("password") or "").strip()
-            if not password:
-                raise ValueError(f"{path} line {lineno}: {email} has no password")
-            accounts.append(
-                WalmartAccount(
-                    email=email,
-                    password=password,
-                    proxy=(row.get("proxy") or "").strip(),
-                    notes=(row.get("notes") or "").strip(),
-                )
-            )
+        )
+
     if not accounts:
-        raise ValueError(f"{path} has no accounts in it")
+        detail = ("\n  " + "\n  ".join(problems[:5])) if problems else ""
+        raise ValueError(
+            f"No usable accounts in {path}. Each line needs at least an email "
+            f"address; a password is optional when signing in with the emailed "
+            f"code. Use 'email', 'email,password' or 'email:password'.{detail}"
+        )
+    if problems:
+        print(f"  Skipped {len(problems)} bad line(s) in {path}:")
+        for problem in problems[:5]:
+            print(f"    {problem}")
+        if len(problems) > 5:
+            print(f"    ... and {len(problems) - 5} more")
     return accounts
 
 

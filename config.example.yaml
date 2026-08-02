@@ -289,11 +289,55 @@ walmart:
   login_url: "https://www.walmart.com/account/login"
   phone_url: "https://www.walmart.com/account/profile"
 
+  # --- Mailbox for the SIGN-IN code ------------------------------------------
+  # At sign-in Walmart offers a password or an emailed one-time code. The flow
+  # always takes the code, so it needs to read the catch-all this points at.
+  # This is separate from the `imap:` block above, which is iCloud for Sam's
+  # Club — this one is the Gmail catch-all your Walmart accounts use.
+  #
+  # Gmail requires an APP PASSWORD (myaccount.google.com > Security > 2-Step
+  # Verification > App passwords). Your normal password will NOT work over
+  # IMAP, and IMAP must be enabled in Gmail settings.
+  imap:
+    host: "imap.gmail.com"
+    port: 993
+    ssl: true
+    username: "you@gmail.com"          # the catch-all account itself
+    password: "xxxx xxxx xxxx xxxx"    # 16-char app password
+    mailbox: "INBOX"
+    from_contains:
+      - "walmart"
+    timeout_seconds: 180               # how long to wait for the code email
+    poll_interval_seconds: 5
+    # Walmart's sign-in code is 6 digits. The first capture group is used.
+    code_regex: '\b(\d{6})\b'
+
+  # Walmart gets its own proxy list, separate from the Sam's Club one — these
+  # are residential IPs for a different site. Built for a large list: paste
+  # 5,000 lines in, duplicates are dropped and unparseable lines are skipped
+  # with a count rather than stopping the run.
+  proxies:
+    enabled: true
+    file: "walmart_proxies.txt"     # copy walmart_proxies.example.txt
+    # fresh       -> a shuffled IP per account, never reused until the pool
+    #                wraps around. Best with a big list, and the default.
+    # sticky      -> same account always gets the same IP (deterministic)
+    # round_robin -> straight through the list in order
+    # random      -> any IP, repeats possible
+    rotation: "fresh"
+
   selectors:
     # --- Sign-in. Walmart often asks for the email first and the password on a
     # second screen; leave login_continue empty if it's a single form.
     login_email: "input[type='email']"
     login_continue: ""
+    # The "send me a code instead" option on the password screen. When this is
+    # set the flow ALWAYS takes the emailed code rather than typing a password.
+    # Leave it empty to fall back to the password.
+    login_use_code: ""
+    login_code_input: "input[autocomplete='one-time-code']"
+    login_code_submit: "button[type='submit']"
+    # Only used if login_use_code is empty.
     login_password: "input[type='password']"
     login_submit: "button[type='submit']"
     # Something that exists only once signed in. Empty = skip the check, which

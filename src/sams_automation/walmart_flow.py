@@ -41,6 +41,7 @@ class AccountResult:
     code: str = ""
     provider: str = ""
     error: str = ""
+    login_method: str = ""     # "code" or "password"
     attempts: list[Any] = field(default_factory=list)
 
 
@@ -108,27 +109,63 @@ class WalmartFlow:
         raise FlowError("bot check was not solved in time")
 
     # -- steps -------------------------------------------------------------
-    def login(self, account: WalmartAccount) -> None:
+    def login(
+        self, account: WalmartAccount, fetch_email_code: Callable[[], str] | None = None
+    ) -> str:
+        """Sign in, preferring the emailed one-time code over the password.
+
+        Walmart offers a choice at sign-in: type the password, or have a code
+        sent. The code path is the one we want — it doesn't expose the password
+        to a bot-check challenge, and it's what the account is set up for.
+        The password is only used if no code option is configured or no mailbox
+        reader was supplied.
+
+        Returns "code" or "password" for the log.
+        """
         self.page.goto(self.cfg.login_url)
         self.wait_out_captcha()
         self._fill("login_email", account.email)
-        # Walmart often splits email and password across two screens, so a
-        # "continue" button between them is optional rather than assumed.
+        # Walmart splits email and password across two screens, so a "continue"
+        # button between them is optional rather than assumed.
         cont = (self.cfg.selectors or {}).get("login_continue", "")
         if cont:
             self.page.click(cont)
             self.wait_out_captcha()
-        self._fill("login_password", account.password)
-        self.page.click(self._sel("login_submit"))
+
+        use_code = (self.cfg.selectors or {}).get("login_use_code", "")
+        if use_code and fetch_email_code is not None:
+            method = "code"
+            self.page.click(use_code)
+            self.wait_out_captcha()
+            self.shot("login-code-requested")
+            code = fetch_email_code()
+            if not code:
+                raise FlowError(
+                    "no sign-in code arrived in the mailbox — check walmart.imap "
+                    "and that the code actually went to this account's address"
+                )
+            self._fill("login_code_input", code)
+            self.page.click(self._sel("login_code_submit"))
+        else:
+            if not account.password:
+                raise FlowError(
+                    f"{account.email} has no password and the emailed-code path "
+                    "isn't configured (set walmart.selectors.login_use_code)"
+                )
+            method = "password"
+            self._fill("login_password", account.password)
+            self.page.click(self._sel("login_submit"))
+
         self.wait_out_captcha()
         self.shot("after-login")
 
         marker = (self.cfg.selectors or {}).get("logged_in_marker", "")
         if marker and self.page.locator(marker).count() == 0:
             raise FlowError(
-                "login didn't land on a signed-in page — check the password, "
-                "or correct walmart.selectors.logged_in_marker"
+                f"login via {method} didn't land on a signed-in page — check the "
+                "credentials, or correct walmart.selectors.logged_in_marker"
             )
+        return method
 
     def open_phone_form(self) -> None:
         self.page.goto(self.cfg.phone_url)
@@ -165,6 +202,7 @@ def add_phone_to_account(
     flow: WalmartFlow,
     account: WalmartAccount,
     acquire_number: Callable[[], Any],
+    fetch_email_code: Callable[[], str] | None = None,
 ) -> AccountResult:
     """One account, end to end.
 
@@ -173,7 +211,7 @@ def add_phone_to_account(
     invoked at exactly the right moment, once the form is on screen.
     """
     try:
-        flow.login(account)
+        login_method = flow.login(account, fetch_email_code)
         flow.open_phone_form()
     except Exception as e:
         return AccountResult(account.email, False, error=f"{type(e).__name__}: {e}")
@@ -191,6 +229,7 @@ def add_phone_to_account(
         provider=purchase.provider,
         code=purchase.code or "",
         attempts=attempts,
+        login_method=login_method,
     )
     try:
         flow.submit_phone(purchase.national)

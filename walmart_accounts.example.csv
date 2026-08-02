@@ -1,3 +1,11 @@
-email,password,proxy,notes
-kdotcannon87+wm1@gmail.com,SomePassword1!,,first account
-kdotcannon87+wm2@gmail.com,SomePassword2!,,
+# One account per line. Either of these works, mixed freely:
+#
+#   email,password
+#   email:password
+#
+# The header line below is optional. Extra columns are optional too:
+#   email,password,proxy,notes
+# Leave proxy empty to draw from walmart_proxies.txt.
+email,password
+you+wm1@gmail.com,YourPassword1
+you+wm2@gmail.com:YourPassword2
