@@ -121,6 +121,32 @@ def test_fivesim_parses_us_offers():
     assert report.total_stock == 1200
 
 
+def test_fivesim_skips_rental_products():
+    # "hosting" is 5sim's rented-number product. Pay-per-verification only, so
+    # a rental must never appear next to a per-code price.
+    install(
+        {
+            "guest/products": {
+                "walmart": {"Category": "activation"},
+                "walmart_hosting": {"Category": "hosting"},
+            },
+            "guest/prices": FIVESIM_PRICES,
+        }
+    )
+    report = sp.FiveSim({}).check()
+    assert report.ok, report.error
+    assert {o.service for o in report.offers} == {"walmart"}
+    assert any("not pay-per-code" in n for n in report.notes)
+
+
+def test_fivesim_missing_category_is_treated_as_activation():
+    # Older/partial catalog rows omit Category; don't silently drop a real
+    # activation product over a missing field.
+    install({"guest/products": {"walmart": {}}, "guest/prices": FIVESIM_PRICES})
+    report = sp.FiveSim({}).check()
+    assert report.ok and report.offers
+
+
 def test_fivesim_all_countries_includes_canada():
     install({"guest/products": FIVESIM_CATALOG, "guest/prices": FIVESIM_PRICES})
     report = sp.FiveSim({}).check(us_only=False)

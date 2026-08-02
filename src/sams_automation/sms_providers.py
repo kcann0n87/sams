@@ -302,7 +302,19 @@ class FiveSim(Provider):
         try:
             catalog = _request_json(f"{self.base_url}/v1/guest/products/usa/any")
             if isinstance(catalog, dict):
-                found = {p for p in catalog if _matches(p, terms)}
+                for product, info in catalog.items():
+                    if not _matches(product, terms):
+                        continue
+                    # 5sim sells two things: "activation" (one code, pay per
+                    # verification) and "hosting" (a rented number by the
+                    # day/week). Only activation belongs in this comparison —
+                    # a rental listed next to a $0.35 code is not a like-for-
+                    # like price, and it's not what we're shopping for.
+                    category = str(_first(info, "Category", "category") or "activation")
+                    if category.lower() != "activation":
+                        notes.append(f"skipped {product} ({category}, not pay-per-code)")
+                        continue
+                    found.add(product)
         except ProviderError as e:
             notes.append(f"catalog lookup failed ({e}); probing 'walmart' directly")
 

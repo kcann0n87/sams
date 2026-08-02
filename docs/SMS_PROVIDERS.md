@@ -108,6 +108,30 @@ Worth trying alongside it:
 delivery rates swing hour to hour, which is the reason this is a checker you
 re-run rather than a table you read once.
 
+## Pay-per-verification only — no rentals
+
+Every provider here sells two different things:
+
+- **Activation / verification** — one number, one code, pay per use (~$0.35).
+- **Rental / hosting** — a dedicated number you keep for a day to a year.
+
+This tool only ever reports the **first**. A rental listed next to a per-code
+price isn't a like-for-like comparison, and a rented number reused across
+several signups tends to get rejected anyway.
+
+Each adapter enforces that at the endpoint it calls:
+
+| Provider | What keeps rentals out |
+|---|---|
+| 5sim | catalog rows with `Category: hosting` are skipped (noted in output) |
+| textverified | queries `reservationType=verification` |
+| daisysms | uses `getPricesVerification` |
+| activate family | `getPrices` is the activation feed; rentals live behind `getRent*` actions |
+| smspool | `request/price` is the per-verification price; rentals are separate endpoints |
+
+If a provider ever starts mixing the two, that's a bug — the output should say
+`skipped <product> (hosting, not pay-per-code)` rather than quietly listing it.
+
 ## How service discovery works
 
 Each provider names the service differently — `walmart`, `wm`, `1023` — and
