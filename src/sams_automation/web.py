@@ -182,6 +182,8 @@ INDEX_HTML = """<!doctype html>
     <h2>Screenshots <span class="note" id="shotcount"></span></h2>
     <div class="shots" id="shots"></div>
   </div>
+
+  <p class="note" style="text-align:center" id="build">&nbsp;</p>
 </main>
 <script>
 async function post(url){ await fetch(url,{method:'POST'}); tick(); }
@@ -205,6 +207,9 @@ async function savePw(){
 }
 async function loadWalmart(){
   const w = await jget('/api/walmart/info');
+  document.getElementById('build').textContent =
+    'build ' + (w.build || '?') +
+    " — if the Walmart card is missing, stop the server (Ctrl-C) and run ./start.sh again";
   const missing = [];
   if (!w.accounts) missing.push('accounts (walmart_accounts.csv)');
   if (!w.imap_ready) missing.push('Gmail app password (walmart.imap)');
@@ -395,7 +400,10 @@ def create_app(config_path: str, accounts_path: str) -> Flask:
         except OSError:
             n_proxies = 0
 
+        from .web_sms import build_id
+
         return jsonify(
+            build=build_id(),
             accounts=n_accounts,
             accounts_error=accounts_error,
             imap_user=imap_user,

@@ -395,6 +395,14 @@ SMS_HTML = """<!doctype html>
 <main>
   <div class="banner" id="banner"></div>
 
+  <div class="card" style="border-left:4px solid #0071dc">
+    <h2 style="margin-bottom:6px">Keys are set — ready to run?</h2>
+    <p class="note" style="margin:0 0 12px">
+      This page is for provider keys and stock. The buttons that actually add
+      numbers to your Walmart accounts are on the main page.</p>
+    <a href="/"><button class="primary">Go to Walmart runs &rarr;</button></a>
+  </div>
+
   <div class="card">
     <div class="row" style="justify-content:space-between">
       <div class="row">
