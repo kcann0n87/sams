@@ -530,9 +530,13 @@ async function detectProvider(){
 
     // On a miss the request log IS the answer, so it's open by default and
     // one click from the clipboard — it's what gets pasted for diagnosis.
+    // NOTE: this whole page is a Python string, so JS backslash escapes must be
+    // doubled in the source. A single one becomes a real newline, which inside
+    // a quoted string is a syntax error that kills the entire script block —
+    // and the page then renders with no providers at all.
     const diag = (j.calls||[]).map(c =>
-      `${c.ok?'ok ':'ERR'} ${c.method} ${c.url}\n    ${c.detail||''}`).join('\n');
-    window.__probeDiag = `provider: ${name}\nbase_url: ${url}\nresult: ${j.protocol||'no match'}\n\n` + diag;
+      `${c.ok?'ok ':'ERR'} ${c.method} ${c.url}\\n    ${c.detail||''}`).join('\\n');
+    window.__probeDiag = `provider: ${name}\\nbase_url: ${url}\\nresult: ${j.protocol||'no match'}\\n\\n` + diag;
     $('probeout').innerHTML = head +
       `<table><thead><tr><th>Protocol</th><th>Result</th><th></th></tr></thead>
        <tbody>${tried}</tbody></table>` +

@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -332,6 +333,74 @@ def test_dead_provider_listed_but_not_counted_ready():
         dead = [r for r in rows if r["dead"]]
         assert dead and all(not r["has_key"] for r in dead)
         assert any("shut down" in r["note"] for r in dead)
+
+
+# --- page script sanity ---------------------------------------------------
+
+
+def _page_script() -> str:
+    from sams_automation.web_sms import SMS_HTML
+
+    return SMS_HTML.split("<script>")[1].split("</script>")[0]
+
+
+def test_page_script_parses_as_javascript():
+    """The page is one big Python string, so JS escapes must be doubled.
+
+    A single backslash-n becomes a real newline before the browser sees it.
+    Inside a quoted string that's a syntax error; inside a // comment it splits
+    the comment and turns its tail into bare code. Either way the whole script
+    block dies and the page renders with no providers — with nothing in the
+    server log to explain it, which is exactly how this shipped once.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    node = shutil.which("node")
+    if not node:
+        print("SKIP: node not installed; falling back to the quote heuristic")
+        assert not _unterminated_string_lines(_page_script())
+        return
+
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
+        fh.write(_page_script())
+        path = fh.name
+    result = subprocess.run([node, "--check", path], capture_output=True, text=True)
+    assert result.returncode == 0, f"page JavaScript does not parse:\n{result.stderr}"
+
+
+def _unterminated_string_lines(script: str) -> list[str]:
+    """Fallback check for environments with no node.
+
+    Blanks out template literals and // comments first — both legitimately
+    contain apostrophes ("don't") that would look like unbalanced quotes.
+    """
+    script = re.sub(
+        r"`[^`]*`", lambda m: "\n" * m.group(0).count("\n"), script, flags=re.S
+    )
+    script = re.sub(r"//[^\n]*", "", script)
+    problems = []
+    for lineno, line in enumerate(script.splitlines(), 1):
+        probe = re.sub(r"\\.", "", line)
+        for quote in ("'", '"'):
+            if probe.count(quote) % 2:
+                problems.append(f"line {lineno}: unterminated {quote}: {line.strip()[:80]}")
+    return problems
+
+
+def test_the_fallback_linter_catches_the_bug_it_exists_for():
+    broken = "const a = ['x'].join('\n');\nconsole.log(a);\n"
+    assert _unterminated_string_lines(broken), "linter would not have caught it"
+    assert not _unterminated_string_lines("const a = ['x'].join('\\n');\n")
+
+
+def test_page_script_never_contains_a_raw_newline_escape():
+    from sams_automation.web_sms import SMS_HTML
+
+    # After Python evaluates the module, JS newline escapes must still be the
+    # two-character sequence, not an actual line break.
+    assert "\\n" in SMS_HTML, "expected JS newline escapes to survive as \\n"
 
 
 # --- helpers --------------------------------------------------------------
