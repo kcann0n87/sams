@@ -23,6 +23,7 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 
 from .config import load_accounts, load_config
 from .web_sms import register_sms_routes
+from .web_walmart import register_walmart_routes
 
 
 class Job:
@@ -155,15 +156,11 @@ INDEX_HTML = """<!doctype html>
       When Chrome opens and shows a “press &amp; hold” box, solve it in that window — the run waits for you.</p>
   </div>
 
-  <div class="card">
-    <h2>Walmart — add a phone number</h2>
-    <p class="note" id="wmstatus">checking…</p>
-    <div class="row">
-      <button class="primary" onclick="post('/api/walmart/run?limit=1')" id="b-wm1">Run 1 account</button>
-      <button class="primary" onclick="if(confirm('Run every account?'))post('/api/walmart/run')" id="b-wmall">Run all accounts</button>
-      <a href="/sms" class="note" style="margin-left:auto">SMS providers &amp; stock &rarr;</a>
-    </div>
-    <p class="note" id="wmhint"></p>
+  <div class="card" style="border-left:4px solid #0071dc">
+    <h2 style="margin-bottom:6px">Walmart — add phone numbers</h2>
+    <p class="note" style="margin:0 0 12px">A separate flow with its own page:
+      buys a verification number and adds it to your Walmart accounts.</p>
+    <a href="/walmart"><button class="primary">Open Walmart runs &rarr;</button></a>
   </div>
 
   <div class="card">
@@ -207,9 +204,7 @@ async function savePw(){
 }
 async function loadWalmart(){
   const w = await jget('/api/walmart/info');
-  document.getElementById('build').textContent =
-    'build ' + (w.build || '?') +
-    " — if the Walmart card is missing, stop the server (Ctrl-C) and run ./start.sh again";
+  document.getElementById('build').textContent = 'build ' + (w.build || '?');
   const missing = [];
   if (!w.accounts) missing.push('accounts (walmart_accounts.csv)');
   if (!w.imap_ready) missing.push('Gmail app password (walmart.imap)');
@@ -235,7 +230,7 @@ async function tick(){
   const pill = document.getElementById('statuspill');
   pill.textContent = s.running ? ('running: '+s.kind) : 'idle';
   pill.className = 'pill ' + (s.running ? 'run':'idle');
-  for (const b of ['b-imap','b-run1','b-runall','b-wm1','b-wmall'])
+  for (const b of ['b-imap','b-run1','b-runall'])
     document.getElementById(b).disabled = s.running;
   document.getElementById('b-stop').disabled = !s.running;
   const log = document.getElementById('log');
@@ -418,6 +413,8 @@ def create_app(config_path: str, accounts_path: str) -> Flask:
     def api_stop():
         job.stop()
         return jsonify(stopped=True)
+
+    register_walmart_routes(app, config_path, job, _py_cli, root)
 
     @app.post("/api/set-password")
     def api_set_password():

@@ -390,7 +390,7 @@ SMS_HTML = """<!doctype html>
 <body>
 <header>
   <h1>SMS providers — Walmart availability</h1>
-  <a href="/">&larr; back to automation</a>
+  <div><a href="/walmart" style="color:#fff">Walmart runs</a><a href="/" style="color:#fff;margin-left:14px">Sam's Club</a></div>
 </header>
 <main>
   <div class="banner" id="banner"></div>
@@ -398,9 +398,9 @@ SMS_HTML = """<!doctype html>
   <div class="card" style="border-left:4px solid #0071dc">
     <h2 style="margin-bottom:6px">Keys are set — ready to run?</h2>
     <p class="note" style="margin:0 0 12px">
-      This page is for provider keys and stock. The buttons that actually add
-      numbers to your Walmart accounts are on the main page.</p>
-    <a href="/"><button class="primary">Go to Walmart runs &rarr;</button></a>
+      This page is for provider keys and stock. Adding numbers to your Walmart
+      accounts happens on its own page.</p>
+    <a href="/walmart"><button class="primary">Go to Walmart runs &rarr;</button></a>
   </div>
 
   <div class="card">
