@@ -1,6 +1,6 @@
 {
   "name": "CyberYozh",
-  "description": "app.cyberyozh.com — residential and virtual numbers, X-Api-Key header",
+  "description": "app.cyberyozh.com \u2014 residential and virtual numbers, X-Api-Key header",
   "version": "0.9.0",
   "author": "sams-automation",
   "priceFormat": "USD",
@@ -17,7 +17,7 @@
       {
         "name": "provider",
         "label": "Provider type",
-        "description": "residential is non-VoIP and the better bet for retail sites. virtual is cheaper. Rentals are the _rent variants — not what you want for one code.",
+        "description": "residential is non-VoIP and the better bet for retail sites. virtual is cheaper. Rentals are the _rent variants \u2014 not what you want for one code.",
         "required": true,
         "defaultValue": "residential"
       },
@@ -30,8 +30,9 @@
       {
         "name": "country",
         "label": "Country code",
-        "description": "Numeric code from GET /numbers/countries/",
-        "required": true
+        "description": "Numeric code from GET /numbers/countries/. United States America is 667.",
+        "required": true,
+        "defaultValue": "667"
       },
       {
         "name": "period",
@@ -43,20 +44,20 @@
     ],
     "userDataConfigs": [
       {
-        "name": "Walmart — residential (fill in the codes)",
+        "name": "Walmart \u2014 residential (fill in the service code)",
         "values": {
           "provider": "residential",
           "service": "",
-          "country": "",
+          "country": "667",
           "period": "MIN_15"
         }
       },
       {
-        "name": "Walmart — virtual (fill in the codes)",
+        "name": "Walmart \u2014 virtual (fill in the service code)",
         "values": {
           "provider": "virtual",
           "service": "",
-          "country": "",
+          "country": "667",
           "period": "MIN_15"
         }
       }
