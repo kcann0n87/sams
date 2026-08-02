@@ -423,6 +423,23 @@ def test_login_page_is_dumped_before_the_first_fill():
     assert "input" in saved.read_text()
 
 
+def test_code_choice_screen_is_named_rather_than_timing_out_on_a_password():
+    """Walmart can skip the password screen entirely.
+
+    Filling a password field that isn't there burns 30s and blames the
+    selector, when the fix is to configure the code option.
+    """
+    class OtpPage(FakePage):
+        url = "https://identity.walmart.com/account/signin/withotpchoice?x=1"
+
+    page = OtpPage()
+    flow = _flow(page, login_continue="#next")
+    result = add_phone_to_account(flow, ACCOUNT, _never_buys)
+    assert not result.ok
+    assert "code-choice screen" in result.error, result.error
+    assert "#password" not in page.filled
+
+
 def test_describe_reports_the_page_state():
     page = FakePage(present={"input[type='password']"})
     flow = _flow(page)

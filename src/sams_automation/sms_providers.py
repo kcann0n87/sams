@@ -148,6 +148,21 @@ def _matches(name: str, terms: Sequence[str]) -> bool:
     return any(_norm(t) in n for t in terms if t)
 
 
+# Exact spellings only. `_matches(name, ("us",))` is a substring test, so it
+# also accepts Australia, Austria, Belarus, Cyprus, Mauritius and Russia —
+# every one of them normalises to something containing "us". That quietly put
+# foreign pools into a US-only run, where a bought number can never receive a
+# US Walmart code.
+US_COUNTRY_NAMES = frozenset({
+    "us", "usa", "unitedstates", "unitedstatesofamerica", "america",
+})
+
+
+def _is_us(name: Any) -> bool:
+    """Whether a provider's country label means the United States."""
+    return _norm(name) in US_COUNTRY_NAMES
+
+
 def _as_float(value: Any) -> float | None:
     try:
         return float(value)
@@ -272,7 +287,7 @@ class FiveSim(Provider):
             )
             # Answers are keyed by product even though we asked for one.
             for country, operators in (data.get(product) or {}).items():
-                if us_only and _norm(country) not in ("usa", "unitedstates", "us"):
+                if us_only and not _is_us(country):
                     continue
                 if not isinstance(operators, dict):
                     continue
@@ -614,7 +629,7 @@ class SmsPool(Provider):
                 continue
             cid = _first(c, "ID", "id", "country_id")
             cname = str(_first(c, "name", "country") or cid)
-            if us_only and not _matches(cname, ("united states", "usa", "us")):
+            if us_only and not _is_us(cname):
                 continue
             out.append((cid, cname))
         return out or [("1", "United States")]
@@ -725,7 +740,7 @@ class SecureIoSms(Provider):
             if not _matches(name, terms):
                 continue
             for region, info in _iter_regions(regions):
-                if us_only and not _matches(region, ("us", "usa", "united states")):
+                if us_only and not _is_us(region):
                     continue
                 offers.append(
                     Offer(

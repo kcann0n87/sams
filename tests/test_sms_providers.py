@@ -798,6 +798,20 @@ def test_check_all_isolates_a_failing_provider():
     assert not by_name["smspool"].ok  # no fixture -> error, but no crash
 
 
+def test_us_only_rejects_countries_that_merely_contain_us():
+    """The filter was a substring test, so half a dozen countries slipped in.
+
+    "us" is inside Australia, Austria, Belarus, Cyprus, Mauritius and Russia
+    once punctuation and case are stripped. A US-only run was buying numbers
+    that can never receive a US Walmart code.
+    """
+    for name in ("United States", "USA", "us", "united states of america"):
+        assert sp._is_us(name), name
+    for name in ("Australia", "Austria", "Belarus", "Cyprus", "Mauritius",
+                 "Russia", "United Kingdom"):
+        assert not sp._is_us(name), name
+
+
 def test_check_all_reports_progress_and_keeps_input_order():
     """Results stay in the order given even though they finish out of order.
 

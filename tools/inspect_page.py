@@ -14,7 +14,12 @@ import pathlib
 import sys
 from html.parser import HTMLParser
 
-INTERESTING = {"input", "button", "a", "select", "textarea", "form", "iframe"}
+INTERESTING = {"input", "button", "a", "select", "textarea", "form", "iframe", "label"}
+# Anything clickable that isn't a <button>. Walmart's code-choice screen has
+# input=0 and only two real buttons, so its options are built from divs and
+# list items carrying a role or a test id — invisible to a tag-name scan.
+ROLES = {"button", "radio", "checkbox", "link", "menuitem", "option", "tab"}
+CLICKABLE_ATTRS = ("data-automation-id", "data-testid", "data-testid-id")
 # Void elements have no end tag, so they must never go on the open stack —
 # otherwise every following run of text gets attributed to the last <input>.
 VOID = {"input", "iframe", "br", "img", "hr", "source", "area", "embed"}
@@ -26,36 +31,58 @@ class Collector(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.found: list[tuple[str, dict[str, str], str]] = []
-        self._open: list[int] = []
+        # Every open non-void element, as (tag, index into found or None).
+        # Tracking the uninteresting ones too is what keeps the nesting right:
+        # a </div> closing a plain wrapper must not close the <div role=button>
+        # around it, or all the following text lands on the wrong element.
+        self._stack: list[tuple[str, int | None]] = []
         self.title = ""
         self._in_title = False
 
     def handle_starttag(self, tag, attrs):
         if tag == "title":
             self._in_title = True
-        if tag in INTERESTING:
-            self.found.append((tag, {k: (v or "") for k, v in attrs}, ""))
-            if tag not in VOID:
-                self._open.append(len(self.found) - 1)
+        mapping = {k: (v or "") for k, v in attrs}
+        interesting = tag in INTERESTING or mapping.get("role", "").lower() in ROLES
+        if not interesting and tag in ("div", "span", "li"):
+            # A test id on a container is how a component library labels the
+            # thing you're meant to click.
+            interesting = any(mapping.get(a) for a in CLICKABLE_ATTRS)
+
+        index = None
+        if interesting:
+            self.found.append((tag, mapping, ""))
+            index = len(self.found) - 1
+        if tag not in VOID:
+            self._stack.append((tag, index))
 
     def handle_startendtag(self, tag, attrs):
+        # Self-closing: record it, but it opens nothing.
+        depth = len(self._stack)
         self.handle_starttag(tag, attrs)
+        del self._stack[depth:]
 
     def handle_endtag(self, tag):
         if tag == "title":
             self._in_title = False
-        if tag in INTERESTING and tag not in VOID and self._open:
-            self._open.pop()
+        for position in range(len(self._stack) - 1, -1, -1):
+            if self._stack[position][0] == tag:
+                del self._stack[position:]
+                return
+        # No matching open tag — a stray close. Leave the stack alone.
 
     def handle_data(self, data):
         if self._in_title:
             self.title += data.strip()
         text = " ".join(data.split())
-        if text and self._open:
-            index = self._open[-1]
-            tag, attrs, existing = self.found[index]
-            # Cap it: some buttons wrap a whole paragraph of legal text.
-            self.found[index] = (tag, attrs, (existing + " " + text).strip()[:60])
+        if not text:
+            return
+        for _, index in reversed(self._stack):
+            if index is not None:
+                tag, attrs, existing = self.found[index]
+                # Cap it: some buttons wrap a whole paragraph of legal text.
+                self.found[index] = (tag, attrs, (existing + " " + text).strip()[:60])
+                return
 
 
 def selector_for(tag: str, attrs: dict[str, str]) -> str:
@@ -122,9 +149,14 @@ def main() -> int:
         if tag == "a" and not text:
             continue  # icon links, no way to identify them by eye
         line = f"  {selector_for(tag, attrs):<46} {describe(tag, attrs, text)}"
-        groups.setdefault(tag, []).append(line.rstrip())
+        # A div carrying role="button" is a button as far as clicking goes, so
+        # group it with the buttons rather than burying it under "div".
+        role = attrs.get("role", "").lower()
+        bucket = tag if tag in INTERESTING else ("clickable" if role in ROLES else "labelled")
+        groups.setdefault(bucket, []).append(line.rstrip())
 
-    for tag in ("form", "input", "select", "textarea", "button", "a", "iframe"):
+    for tag in ("form", "input", "select", "textarea", "label", "button",
+                "clickable", "labelled", "a", "iframe"):
         lines = groups.get(tag)
         if not lines:
             continue

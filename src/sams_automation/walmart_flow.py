@@ -89,6 +89,19 @@ class WalmartFlow:
         except Exception:
             pass
 
+    def settle(self, timeout_ms: int = 15000) -> None:
+        """Wait for a click's navigation to finish before reading the page.
+
+        Best effort: a single-page app may never go fully idle, and a step that
+        didn't navigate at all shouldn't fail here. Either way the next action
+        has its own wait.
+        """
+        for state in ("domcontentloaded", "networkidle"):
+            try:
+                self.page.wait_for_load_state(state, timeout=timeout_ms)
+            except Exception:
+                return
+
     def describe(self) -> str:
         """URL, title and a count of the fields — what to say when a fill fails.
 
@@ -184,8 +197,13 @@ class WalmartFlow:
         cont = (self.cfg.selectors or {}).get("login_continue", "")
         if cont:
             self.page.click(cont)
+            # Continue navigates. Dumping straight away captured the page we
+            # just left — email still filled, the button already disabled —
+            # which is the opposite of what the dump is for.
+            self.settle()
             self.wait_out_captcha()
             self.dump("login-after-continue")
+            print(f"    after continue: {self.describe()}")
 
         use_code = (self.cfg.selectors or {}).get("login_use_code", "")
         if use_code and fetch_email_code is not None:
@@ -206,6 +224,17 @@ class WalmartFlow:
                 raise FlowError(
                     f"{account.email} has no password and the emailed-code path "
                     "isn't configured (set walmart.selectors.login_use_code)"
+                )
+            # Walmart can route straight to a code-choice screen with no
+            # password field at all. Filling one then times out for 30s and
+            # blames the selector, when the real answer is that this account
+            # is on the code path and login_use_code needs setting.
+            if "withotpchoice" in str(getattr(self.page, "url", "")):
+                raise FlowError(
+                    "Walmart went to its code-choice screen, which has no password "
+                    "field. Set walmart.selectors.login_use_code to the option you "
+                    "want — run tools/inspect_page.py on "
+                    "screenshots/walmart-login-after-continue.html to find it"
                 )
             method = "password"
             self._fill("login_password", account.password)

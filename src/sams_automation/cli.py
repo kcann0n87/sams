@@ -195,9 +195,13 @@ def _cmd_sms_plan(args: argparse.Namespace) -> int:
             # An unpriced pool is charged at the cap, so say the number shown is
             # a worst case rather than a quote.
             cost = f"${usd:.2f}" if id(offer) not in unpriced_in_rotation else f"<=${usd:.2f}"
+            # Country included: two rows with the same service and price are
+            # usually different countries, and without it they read as the
+            # same pool listed twice.
             print(
-                f"  {index:2}. {provider.name:<14} {offer.service[:26]:<26} "
-                f"({offer.service_code}) {cost}  stock {stock}{rate}"
+                f"  {index:2}. {provider.name:<14} {offer.service[:24]:<24} "
+                f"{offer.country[:14]:<14} ({offer.service_code}) {cost}  "
+                f"stock {stock}{rate}"
             )
     else:
         print("Nothing to rotate through: no in-stock pool is priceable in USD "
