@@ -17,6 +17,8 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 
+import yaml
+
 from .config import load_accounts, load_config
 from .imap_client import ImapClient, VerificationTimeout
 
@@ -716,6 +718,21 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     except ValueError as e:
         print(f"Config error: {e}", file=sys.stderr)
+        return 2
+    except yaml.YAMLError as e:
+        # A typo in config.yaml is the single most likely failure, and a raw
+        # parser traceback buries the one thing that matters: the line number.
+        mark = getattr(e, "problem_mark", None)
+        where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
+        print(f"\nconfig.yaml isn't valid YAML{where}.", file=sys.stderr)
+        print(f"  {getattr(e, 'problem', e)}", file=sys.stderr)
+        if mark is not None:
+            print(
+                "\nOpen it with:  nano -w config.yaml\n"
+                "then Ctrl-W and enter the line number. A long line split in two "
+                "is the usual cause — editors that hard-wrap do it silently.",
+                file=sys.stderr,
+            )
         return 2
 
 
