@@ -441,6 +441,88 @@ def test_login_page_is_dumped_before_the_first_fill():
     assert "input" in saved.read_text()
 
 
+class FakeElement:
+    def __init__(self, page, text, attrs=None):
+        self.page, self.text, self.attrs = page, text, attrs or {}
+
+    def inner_text(self):
+        return self.text
+
+    def get_attribute(self, name):
+        return self.attrs.get(name)
+
+    def click(self):
+        self.page.clicked.append(f"element:{self.text}")
+
+
+class ChoicePage(FakePage):
+    """A code-choice screen offering email, SMS, and a password field."""
+
+    OPTIONS = [
+        "Text a one-time passcode to (***) ***-1234",
+        "Email a one-time passcode to b***9@gmail.com",
+        # The wrapper around the email option: same words, more of them.
+        "Email a one-time passcode to b***9@gmail.com Choose how to sign in",
+    ]
+
+    def locator(self, selector):
+        if selector == WalmartFlow.CLICKABLE_QUERY:
+            page = self
+            options = [FakeElement(self, t) for t in self.OPTIONS]
+
+            class Multi:
+                def all(self):
+                    return options
+
+                def count(self):
+                    return len(options)
+
+            return Multi()
+        return super().locator(selector)
+
+
+def test_auto_finds_the_emailed_code_option_and_never_the_sms_one():
+    """The code is read from a mailbox, so the SMS option is the wrong one.
+
+    On these accounts the phone it would text is the number being added, which
+    nobody can receive on yet.
+    """
+    page = ChoicePage()
+    flow = _flow(page, login_use_code="auto",
+                 login_code_input="#logincode", login_code_submit="#loginverify")
+    result = add_phone_to_account(
+        flow, ACCOUNT, lambda: (_purchase(), []), fetch_email_code=lambda: "424242"
+    )
+    assert result.ok, result.error
+    assert result.login_method == "code"
+    assert "#password" not in page.filled, "typed the password despite a code option"
+    assert page.filled["#logincode"] == "424242"
+    # The tightest match, not the wrapper that swallows the heading.
+    assert "element:Email a one-time passcode to b***9@gmail.com" in page.clicked
+
+
+def test_auto_falls_back_to_the_password_when_no_code_option_exists():
+    page = FakePage()      # no clickables at all
+    flow = _flow(page, login_use_code="auto")
+    result = add_phone_to_account(
+        flow, ACCOUNT, lambda: (_purchase(), []), fetch_email_code=lambda: "424242"
+    )
+    assert result.ok, result.error
+    assert result.login_method == "password"
+
+
+def test_an_explicit_selector_still_wins_over_the_search():
+    page = ChoicePage()
+    flow = _flow(page, login_use_code="#sendcode",
+                 login_code_input="#logincode", login_code_submit="#loginverify")
+    result = add_phone_to_account(
+        flow, ACCOUNT, lambda: (_purchase(), []), fetch_email_code=lambda: "424242"
+    )
+    assert result.ok, result.error
+    assert result.login_method == "code"
+    assert page.clicked.count("#sendcode") == 1
+
+
 def test_missing_password_field_is_named_rather_than_timing_out():
     """Filling a password field that isn't there burns 30s per account.
 

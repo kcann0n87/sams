@@ -368,10 +368,20 @@ walmart:
     # second screen; leave login_continue empty if it's a single form.
     login_email: "input[type='email']"
     login_continue: ""
-    # The "send me a code instead" option on the password screen. When this is
-    # set the flow ALWAYS takes the emailed code rather than typing a password.
-    # Leave it empty to fall back to the password.
-    login_use_code: ""
+    # The "email me a code" option on the sign-in screen. When this finds
+    # something the flow ALWAYS takes the emailed code rather than typing a
+    # password.
+    #
+    #   "auto"       -> find it by its visible text. Walmart builds these
+    #                   options from divs whose ids are React-generated and
+    #                   change every load, so there is no stable selector to
+    #                   write down; the wording is the only durable handle.
+    #                   Only an option naming BOTH a code and email is taken —
+    #                   the SMS one would send the code to a phone nobody is
+    #                   watching.
+    #   "<selector>" -> use exactly this, for when the search picks wrong.
+    #   ""           -> don't look; type the password.
+    login_use_code: "auto"
     login_code_input: "input[autocomplete='one-time-code']"
     login_code_submit: "button[type='submit']"
     # Only used if login_use_code is empty.

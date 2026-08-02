@@ -144,6 +144,77 @@ class WalmartFlow:
     # Words that mark the "send me a one-time code" option apart from the other
     # things on that screen.
     CODE_WORDS = ("code", "passcode", "otp", "one-time", "one time")
+    # It has to be the emailed one. The code is read out of a mailbox, so the
+    # SMS option would send it to a phone nobody is watching — and on these
+    # accounts that phone is the number we're about to add.
+    EMAIL_WORDS = ("email", "e-mail", "@")
+
+    CLICKABLE_QUERY = "button, [role=button], [data-automation-id], [data-testid], a"
+
+    def _clickables(self) -> list[Any]:
+        try:
+            return self.page.locator(self.CLICKABLE_QUERY).all()[:200]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _text_of(element: Any) -> str:
+        try:
+            return " ".join((element.inner_text() or "").split())[:70]
+        except Exception:
+            return ""
+
+    def find_code_option(self) -> Any | None:
+        """The "email me a one-time code" control on a code-choice screen.
+
+        Walmart builds these options from divs carrying a role rather than
+        buttons, and the ids around them are React-generated and change every
+        load, so there is no stable selector to write down. Matching on the
+        visible text is what survives a reload.
+
+        Returns the tightest element whose text names both a code and email —
+        the innermost span rather than the wrapper, which still triggers the
+        clickable parent but can't accidentally be the whole page.
+        """
+        candidates = []
+        for element in self._clickables():
+            text = self._text_of(element).lower()
+            if not text or not any(w in text for w in self.CODE_WORDS):
+                continue
+            if not any(w in text for w in self.EMAIL_WORDS):
+                continue
+            candidates.append((len(text), element, text))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda c: c[0])
+        _, element, text = candidates[0]
+        print(f"    code option: {text!r}")
+        return element
+
+    def _code_target(self) -> Any | None:
+        """The control to click for an emailed code, or None to use a password.
+
+        `login_use_code: auto` searches the page by its visible text, which is
+        the only stable handle Walmart gives here. Any other value is used
+        verbatim, so a selector can still be pinned when the search picks
+        wrong. Empty keeps the old behaviour of going straight to a password.
+        """
+        setting = str((self.cfg.selectors or {}).get("login_use_code", "")).strip()
+        if not setting:
+            return None
+        if setting.lower() != "auto":
+            # Returned as a string so the click goes through page.click, which
+            # waits for the element. Checking it exists first would fall back
+            # to a password the moment the option rendered a beat late — and a
+            # pinned selector is a deliberate choice worth waiting on.
+            return setting
+        found = self.find_code_option()
+        if found is None:
+            # Say so rather than silently typing a password: this is the whole
+            # point of the code path, and falling back without a word makes it
+            # look like the setting was ignored.
+            print("    no emailed-code option found on this screen — using the password")
+        return found
 
     def suggest_code_options(self) -> list[str]:
         """Print the clickable things that look like a code option.
@@ -262,10 +333,16 @@ class WalmartFlow:
             self.dump("login-after-continue")
             print(f"    after continue: {self.describe()}")
 
-        use_code = (self.cfg.selectors or {}).get("login_use_code", "")
-        if use_code and fetch_email_code is not None:
+        target = self._code_target() if fetch_email_code is not None else None
+        if target is not None:
             method = "code"
-            self.page.click(use_code)
+            # A string is a configured selector; anything else is an element
+            # the text search already has a handle on.
+            if isinstance(target, str):
+                self.page.click(target)
+            else:
+                target.click()
+            self.settle()
             self.wait_out_captcha()
             self.dump("login-code-requested")
             code = fetch_email_code()
