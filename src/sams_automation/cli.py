@@ -145,6 +145,15 @@ def _cmd_walmart(args: argparse.Namespace) -> int:
     from .config import load_walmart_accounts
     from .walmart_runner import RESULTS_FILE, load_done, run_add_phone
 
+    # --accounts is inherited from the shared parser and belongs to the Sam's
+    # Club flow. Passing it here looks like it chose the file but doesn't, so
+    # say which file is actually being read rather than silently ignoring it.
+    if args.accounts != "accounts.csv":
+        print(
+            f"Note: --accounts {args.accounts} is the Sam's Club list and isn't used "
+            f"here.\n      Reading {args.walmart_accounts} (set it with "
+            "--walmart-accounts)."
+        )
     accounts = load_walmart_accounts(args.walmart_accounts)
     if not args.no_resume:
         done = load_done(RESULTS_FILE)

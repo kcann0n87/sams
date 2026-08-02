@@ -41,6 +41,18 @@ fi
 
 export PYTHONPATH="src"
 
+# Also make the package importable when the venv's python is run directly —
+# `.venv/bin/python -m sams_automation ...` gets no PYTHONPATH from this script
+# and otherwise fails with "No module named sams_automation". A .pth file in
+# site-packages is read on interpreter start, so one run of start.sh fixes
+# every later invocation, however it's launched.
+SITE="$("$VENV/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+SRC="$PWD/src"
+PTH="$SITE/sams_automation.pth"
+if [ ! -f "$PTH" ] || [ "$(cat "$PTH" 2>/dev/null)" != "$SRC" ]; then
+    printf '%s\n' "$SRC" > "$PTH"
+fi
+
 # The browser flows need Playwright and a Chromium build — a large download, so
 # it's fetched on first use rather than during setup. Everything else (the SMS
 # checker, the web UI) runs without it.
