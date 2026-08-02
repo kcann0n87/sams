@@ -160,7 +160,15 @@ class WalmartFlow:
     # Every one of these used to start with `button`, so a Continue built as a
     # div with a role — which is how the rest of this screen is built — matched
     # nothing and the code was never requested.
-    PROCEED_WORDS = ("continue", "send", "next", "verify", "get code")
+    # "Request code" is what Walmart calls it. Not "send", not "continue" —
+    # the wording is the whole reason this went unfound.
+    PROCEED_WORDS = (
+        "request code", "request", "send code", "send", "get code",
+        "continue", "next", "verify",
+    )
+    # Never these. The password form's submit sits on the same screen, and
+    # pressing it with an empty password is how you fail a sign-in attempt.
+    NOT_PROCEED_WORDS = ("sign in", "show", "change", "feedback", "forgot")
     PROCEED_SELECTORS = (
         "button[type='submit']:visible",
         "[data-automation-id*='continue' i]:visible",
@@ -347,16 +355,23 @@ class WalmartFlow:
         visible clickable whose wording says it proceeds — which is how this
         screen builds it, as a div with a role rather than a button.
         """
-        for selector in self.PROCEED_SELECTORS[:3]:
-            found = self._first_visible((selector,))
-            if found is not None and self._enabled(found):
-                return found
+        # Wording first, shape second. The screen carries the password form's
+        # "Sign in" as a visible submit button, so taking the first submit
+        # would press that — with an empty password — instead of the control
+        # that requests a code.
         for element in self._clickables():
             text = self._option_text(element).lower()
             if not text or len(text) > 40:
                 continue          # a long label is the option, not the button
+            if any(w in text for w in self.NOT_PROCEED_WORDS):
+                continue
             if any(w in text for w in self.PROCEED_WORDS) and self._enabled(element):
+                print(f"    send control: {text!r}")
                 return element
+        for selector in self.PROCEED_SELECTORS[1:3]:   # continue-ish test ids
+            found = self._first_visible((selector,))
+            if found is not None and self._enabled(found):
+                return found
         return None
 
     def enter_code(self, code: str) -> bool:

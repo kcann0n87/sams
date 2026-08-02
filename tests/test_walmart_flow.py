@@ -508,6 +508,61 @@ def test_auto_finds_the_emailed_code_option_and_never_the_sms_one():
     assert "element:Email a one-time passcode to b***9@gmail.com" in page.clicked
 
 
+def test_walmarts_request_code_button_is_recognised():
+    """The real wording, taken from a live run.
+
+    The screen also shows the password form's "Sign in" submit; pressing that
+    with an empty password fails the attempt, so wording has to beat shape.
+    """
+    class Control:
+        def __init__(self, text, page):
+            self.text, self.page = text, page
+
+        def is_visible(self):
+            return True
+
+        def is_enabled(self):
+            return True
+
+        def inner_text(self):
+            return self.text
+
+        def get_attribute(self, name):
+            return None
+
+        def click(self):
+            self.page.clicked.append(self.text)
+
+    class RealChooser(FakePage):
+        LABELS = [
+            "Change",
+            "Choose a sign in method",
+            "Email me a verification code b***9@gmail.com",
+            "Password",
+            "Sign in",            # the password form's submit, same screen
+            "Request code",
+            "Give feedback",
+        ]
+
+        def locator(self, selector):
+            if selector == WalmartFlow.CLICKABLE_QUERY:
+                page = self
+                controls = [Control(t, page) for t in page.LABELS]
+
+                class Multi:
+                    def all(self):
+                        return controls
+                return Multi()
+            return super().locator(selector)
+
+    page = RealChooser()
+    flow = _flow(page, login_use_code="auto")
+    proceed = flow._find_proceed()
+    assert proceed is not None, "didn't recognise 'Request code'"
+    proceed.click()
+    assert page.clicked == ["Request code"], page.clicked
+
+
 def test_the_send_button_is_pressed_when_choosing_only_ticks_the_option():
     """A radio chooser doesn't send anything on its own.
 
