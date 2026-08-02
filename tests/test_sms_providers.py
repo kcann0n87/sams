@@ -304,6 +304,51 @@ def test_smspool_no_walmart_service():
     assert report.ok and report.offers == []
 
 
+# --- smspva (its own protocol) --------------------------------------------
+
+
+def test_smspva_needs_a_service_code():
+    # Opaque optNN codes can't be name-matched, so a missing code must be
+    # reported as configuration, not as an empty pool.
+    with env():
+        report = sp.SmsPva({"api_key": "k"}).check()
+    assert report.ok and report.offers == []
+    assert any("service_code" in n for n in report.notes)
+
+
+def test_smspva_reads_price_and_stock():
+    install({
+        "get_service_price": {"price": 0.45},
+        "get_count_new": {"count": 23},
+    })
+    report = sp.SmsPva({"api_key": "k", "service_code": "opt99"}).check()
+    assert report.ok, report.error
+    offer = report.offers[0]
+    assert offer.price == 0.45 and offer.count == 23
+    assert offer.service_code == "opt99" and offer.currency == "USD"
+
+
+def test_smspva_survives_a_missing_stock_endpoint():
+    install({"get_service_price": {"price": 0.45}})
+    report = sp.SmsPva({"api_key": "k", "service_code": "opt99"}).check()
+    assert report.ok and report.offers[0].price == 0.45
+    # No count reported is "unknown", not "empty".
+    assert report.offers[0].in_stock
+    assert any("stock count unavailable" in n for n in report.notes)
+
+
+def test_smspva_is_reachable_as_a_protocol():
+    assert sp.PROTOCOLS["smspva"] is sp.SmsPva
+
+
+def test_unknown_protocol_sites_are_named_not_hidden():
+    # Real sites with real APIs we haven't identified — they must be listed so
+    # they can be probed, not silently absent.
+    assert set(sp.UNKNOWN_PROTOCOL_SITES) == {"pvacodes", "verifysms", "secureiosms"}
+    for name, url in sp.UNKNOWN_PROTOCOL_SITES.items():
+        assert url.startswith("https://"), name
+
+
 # --- protocol probing -----------------------------------------------------
 
 
@@ -344,11 +389,14 @@ def test_probe_reports_total_failure_cleanly():
     assert all(r.detail for r in results), "every failure needs a reason"
 
 
-def test_probe_does_not_double_report_alias_protocol():
+def test_probe_skips_protocols_it_cannot_detect():
     install({"getServicesList": DAISY_SERVICES, "getPrices": DAISY_PRICES})
-    results = sp.probe("https://unknown.example", "k")
-    assert [r.protocol for r in results].count("sms-activate") == 1
-    assert "handler_api" not in [r.protocol for r in results]
+    protocols = [r.protocol for r in sp.probe("https://unknown.example", "k")]
+    assert protocols.count("sms-activate") == 1, "alias double-reported"
+    # smspva answers without a network call when unconfigured, so probing it
+    # would report a match against literally any host.
+    for skipped in sp.UNPROBEABLE:
+        assert skipped not in protocols
 
 
 def test_probe_capture_never_records_the_api_key():

@@ -202,7 +202,9 @@ def _cmd_sms_probe(args: argparse.Namespace) -> int:
 def PROTOCOL_NAMES():
     from .sms_providers import PROTOCOLS
 
-    return [p for p in PROTOCOLS if p != "handler_api"]
+    from .sms_providers import UNPROBEABLE
+
+    return [p for p in PROTOCOLS if p not in UNPROBEABLE]
 
 
 def _sms_list_providers(providers, settings) -> int:

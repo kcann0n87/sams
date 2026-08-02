@@ -464,11 +464,12 @@ def rank_offers(
 ) -> list[tuple[float, Provider, Offer]]:
     """Every in-stock, affordable, USD-priceable offer, cheapest first.
 
-    One entry per provider: a second operator at the same provider is unlikely
-    to behave differently when the first one's codes aren't arriving, and
-    trying it just burns time on a provider already looking unhealthy.
+    Every pool, not one per provider: a site often lists several Walmart pools
+    (different operators, or separate service entries), and they don't share
+    stock or delivery rates — one can be dead while the next works. Skipping
+    them would throw away most of the available options.
     """
-    best_per_provider: dict[str, tuple[float, Provider, Offer]] = {}
+    ranked: list[tuple[float, Provider, Offer]] = []
     for provider, report in pairs:
         if not getattr(report, "ok", False):
             continue
@@ -478,10 +479,20 @@ def rank_offers(
             usd = _sms.to_usd(offer, rub_per_usd)
             if usd is None or usd > max_price_usd:
                 continue
-            current = best_per_provider.get(provider.name)
-            if current is None or usd < current[0]:
-                best_per_provider[provider.name] = (usd, provider, offer)
-    return sorted(best_per_provider.values(), key=lambda t: t[0])
+            ranked.append((usd, provider, offer))
+    # Cheapest first; ties broken by the provider's own success rate when it
+    # reports one, so a 90%-delivery pool is tried before a 40% one at the
+    # same price.
+    return sorted(ranked, key=lambda t: (t[0], -(t[2].success_rate or 0)))
+
+
+# Provider-wide failures: no other pool at that site will work either, so the
+# rest of its offers are skipped rather than burning attempts one by one.
+FATAL_MARKERS = ("BAD_KEY", "NO_BALANCE", "HTTP 401", "HTTP 403", "auth")
+
+
+def _is_provider_wide(detail: str) -> bool:
+    return any(m.lower() in detail.lower() for m in FATAL_MARKERS)
 
 
 def acquire_any(
@@ -511,7 +522,12 @@ def acquire_any(
         )
 
     attempts: list[Attempt] = []
-    for usd, provider, offer in candidates[:max_attempts]:
+    dead_providers: set[str] = set()
+    for usd, provider, offer in candidates:
+        if len(attempts) >= max_attempts:
+            break
+        if provider.name in dead_providers:
+            continue
         try:
             purchase = acquire(
                 provider, offer, cfg, budget,
@@ -528,6 +544,9 @@ def acquire_any(
             # The number was bought and cancelled, so the charge is reversed on
             # most providers — hand the budget back before trying the next.
             budget.refund(usd)
+            if _is_provider_wide(str(e)):
+                # A bad key or empty balance kills every pool at this site.
+                dead_providers.add(provider.name)
             attempts.append(Attempt(provider.name, offer, usd, False, str(e)))
             if on_attempt:
                 on_attempt(attempts[-1])

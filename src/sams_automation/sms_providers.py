@@ -616,8 +616,76 @@ class SmsPool(Provider):
         return data if isinstance(data, dict) else None
 
 
+class SmsPva(Provider):
+    """smspva.com — its own API, not a clone of any of the others.
+
+    Everything hangs off `priemnik.php?metod=...`, and services are opaque
+    "optNN" codes rather than names, so there's nothing to name-match against.
+    The Walmart code therefore has to be configured:
+
+        sms_providers:
+          smspva:
+            api_key: "..."
+            service_code: "opt99"    # from smspva.com's service list
+
+    Without one the adapter says so rather than reporting a false "no stock" —
+    a missing config value and an empty pool are very different answers.
+    """
+
+    name = "smspva"
+    signup_url = "https://smspva.com/"
+    env_key = "SMSPVA_API_KEY"
+    DEFAULT_BASE = "https://smspva.com"
+
+    @property
+    def service_code(self) -> str:
+        return str(self.settings.get("service_code") or "").strip()
+
+    def _call(self, metod: str, **params: Any) -> Any:
+        return _request_json(
+            f"{self.base_url}/priemnik.php",
+            params={"apikey": self.api_key, "metod": metod, **params},
+        )
+
+    def fetch(self, terms: Sequence[str], us_only: bool) -> tuple[list[Offer], list[str]]:
+        code = self.service_code
+        if not code:
+            return [], [
+                "set sms_providers.smspva.service_code to Walmart's optNN code "
+                "(smspva lists services as opaque codes, so it can't be matched by name)"
+            ]
+
+        notes: list[str] = []
+        country = "US"
+        data = self._call("get_service_price", country=country, service=code)
+        price = _as_float(_first(data, "price", "cost"))
+
+        count = None
+        try:
+            avail = self._call("get_count_new", country=country, service=code)
+            count = _as_int(_first(avail, "count", "quantity")) if isinstance(avail, dict) else _as_int(avail)
+        except ProviderError as e:
+            notes.append(f"stock count unavailable ({e})")
+
+        return (
+            [
+                Offer(
+                    provider=self.name,
+                    service=f"walmart ({code})",
+                    service_code=code,
+                    country="USA",
+                    price=price,
+                    currency="USD",
+                    count=count,
+                )
+            ],
+            notes,
+        )
+
+
 PROVIDERS: dict[str, type[Provider]] = {
-    cls.name: cls for cls in (FiveSim, TextVerified, DaisySms, HeroSms, SmsPool)
+    cls.name: cls
+    for cls in (FiveSim, TextVerified, DaisySms, HeroSms, SmsPool, SmsPva)
 }
 
 # Adding a site usually needs no code — most resellers are clones of one of
@@ -630,7 +698,16 @@ PROTOCOLS: dict[str, type[Provider]] = {
     "5sim": FiveSim,
     "smspool": SmsPool,
     "textverified": TextVerified,
+    "smspva": SmsPva,
 }
+
+
+# Protocols that auto-detection must skip.
+#   handler_api — an alias of sms-activate; probing both is just noise.
+#   smspva      — needs a service code before it can call anything, so it
+#                 returns "fine, but nothing to show" without touching the
+#                 network. A probe would read that as a match against any host.
+UNPROBEABLE: frozenset[str] = frozenset({"handler_api", "smspva"})
 
 
 class UnknownProtocol(ValueError):
@@ -658,6 +735,15 @@ KNOWN_ACTIVATE_HOSTS: dict[str, dict[str, str]] = {
     "smshub": {"base_url": "https://smshub.org", "env": "SMSHUB_API_KEY"},
     "sms-acktiv": {"base_url": "https://sms-acktiv.ru", "env": "SMS_ACKTIV_API_KEY"},
     "simsms": {"base_url": "https://simsms.org", "env": "SIMSMS_API_KEY"},
+}
+
+# Sites confirmed to exist with a real API, but whose protocol we haven't
+# identified. Listed so `--list-providers` names them and the UI can offer to
+# probe them, rather than pretending they don't exist.
+UNKNOWN_PROTOCOL_SITES: dict[str, str] = {
+    "pvacodes": "https://beta.pvacodes.com",
+    "verifysms": "https://www.verifysms.io",
+    "secureiosms": "https://secureiosms.com",
 }
 
 # Registry names already covered by a richer built-in adapter above (the
@@ -791,8 +877,8 @@ def probe(
     """
     results: list[ProbeResult] = []
     for protocol, cls in PROTOCOLS.items():
-        if protocol == "handler_api":
-            continue  # alias of sms-activate; probing both is just noise
+        if protocol in UNPROBEABLE:
+            continue
         provider = cls({"name": name, "base_url": base_url, "api_key": api_key})
         if capture is not None:
             with record_http(capture):

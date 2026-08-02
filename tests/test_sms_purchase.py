@@ -386,14 +386,79 @@ def test_failover_reports_when_nothing_is_in_stock():
         assert "no in-stock offer" in str(e)
 
 
-def test_rank_offers_takes_one_entry_per_provider():
+def test_rank_offers_keeps_every_pool_at_a_provider():
+    # A site often lists several Walmart pools that don't share stock; all of
+    # them are candidates.
     prov = sp.DaisySms({"api_key": "k", "name": "a", "base_url": "https://a"})
     report = sp.ProviderReport("a", ok=True, offers=[
         sp.Offer("a", "Walmart", "wm", "USA", "op1", price=0.50, currency="USD", count=3),
         sp.Offer("a", "Walmart", "wm", "USA", "op2", price=0.20, currency="USD", count=3),
+        sp.Offer("a", "Walmart Grocery", "wmg", "USA", "op1", price=0.30,
+                 currency="USD", count=3),
     ])
     ranked = pur.rank_offers([(prov, report)], max_price_usd=1.0, rub_per_usd=None)
-    assert len(ranked) == 1 and ranked[0][0] == 0.20
+    assert [r[0] for r in ranked] == [0.20, 0.30, 0.50]
+
+
+def test_rank_offers_breaks_price_ties_on_success_rate():
+    prov = sp.DaisySms({"api_key": "k", "name": "a", "base_url": "https://a"})
+    report = sp.ProviderReport("a", ok=True, offers=[
+        sp.Offer("a", "Walmart", "wm", "USA", "bad", price=0.30, currency="USD",
+                 count=3, success_rate=40.0),
+        sp.Offer("a", "Walmart", "wm", "USA", "good", price=0.30, currency="USD",
+                 count=3, success_rate=95.0),
+    ])
+    ranked = pur.rank_offers([(prov, report)], max_price_usd=1.0, rub_per_usd=None)
+    assert [r[2].operator for r in ranked] == ["good", "bad"]
+
+
+def test_bad_key_skips_that_providers_remaining_pools():
+    # A dead key kills every pool at the site, so don't spend attempts on them.
+    sp._request = _router({"a": "nobalance", "b": "code"})
+    now, sleep = _clock()
+    prov_a = sp.DaisySms({"api_key": "k", "name": "a", "base_url": "https://a"})
+    report_a = sp.ProviderReport("a", ok=True, offers=[
+        sp.Offer("a", "Walmart", "wm", "USA", "op1", price=0.10, currency="USD", count=3),
+        sp.Offer("a", "Walmart", "wm", "USA", "op2", price=0.20, currency="USD", count=3),
+        sp.Offer("a", "Walmart", "wm", "USA", "op3", price=0.30, currency="USD", count=3),
+    ])
+    seen = []
+    purchase, _ = pur.acquire_any(
+        [(prov_a, report_a), _pair("b", 0.90)], _cfg(), pur.Budget(),
+        on_attempt=seen.append, sleep=sleep, now=now,
+    )
+    assert purchase.code == "123456"
+    # One attempt at 'a', then straight to 'b' — not three at 'a'.
+    assert [s.provider for s in seen] == ["a", "b"], seen
+
+
+def test_timeout_still_tries_the_next_pool_at_the_same_provider():
+    # Unlike a bad key, a pool that doesn't deliver says nothing about the
+    # other pools at that site.
+    state = {"n": 0}
+
+    def fake(url, **kw):
+        action = (kw.get("params") or {}).get("action")
+        if action == "getNumber":
+            state["n"] += 1
+            return f"ACCESS_NUMBER:{state['n']}:+1305555000{state['n']}"
+        if action == "setStatus":
+            return "ACCESS_CANCEL"
+        # First bought number never gets a code; the second does.
+        return "STATUS_OK:246810" if state["n"] >= 2 else "STATUS_WAIT_CODE"
+    sp._request = fake
+
+    now, sleep = _clock()
+    prov = sp.DaisySms({"api_key": "k", "name": "a", "base_url": "https://a"})
+    report = sp.ProviderReport("a", ok=True, offers=[
+        sp.Offer("a", "Walmart", "wm", "USA", "op1", price=0.10, currency="USD", count=3),
+        sp.Offer("a", "Walmart", "wm", "USA", "op2", price=0.20, currency="USD", count=3),
+    ])
+    seen = []
+    purchase, _ = pur.acquire_any([(prov, report)], _cfg(), pur.Budget(),
+                                  on_attempt=seen.append, sleep=sleep, now=now)
+    assert purchase.code == "246810"
+    assert [s.offer.operator for s in seen] == ["op1", "op2"]
 
 
 def test_failover_progress_is_reported_as_it_happens():
