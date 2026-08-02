@@ -107,6 +107,15 @@ class Budget:
     def record(self, price_usd: float) -> None:
         self.spent += price_usd
 
+    def refund(self, price_usd: float) -> None:
+        """Give budget back for a number that was cancelled.
+
+        Most of these providers only charge once a code actually lands, so a
+        cancelled attempt costs nothing. Without this, cycling through five
+        failing providers would exhaust the run cap having spent nothing.
+        """
+        self.spent = max(0.0, self.spent - price_usd)
+
 
 # --------------------------------------------------------------------------
 # Per-protocol buy / poll
@@ -343,6 +352,7 @@ class PurchaseConfig:
     max_total_usd: float = 5.00
     code_timeout_seconds: int = 180
     poll_interval_seconds: int = 5
+    max_attempts: int = 4
     log_file: str = PURCHASE_LOG
 
 
@@ -431,8 +441,106 @@ def load_purchase_config(raw: dict[str, Any] | None) -> PurchaseConfig:
         max_total_usd=float(raw.get("max_total_usd", 5.00)),
         code_timeout_seconds=int(raw.get("code_timeout_seconds", 180)),
         poll_interval_seconds=int(raw.get("poll_interval_seconds", 5)),
+        max_attempts=int(raw.get("max_attempts", 4)),
         log_file=str(raw.get("log_file", PURCHASE_LOG)),
     )
+
+
+@dataclass
+class Attempt:
+    """One provider tried, and how it went. Kept for the run summary."""
+
+    provider: str
+    offer: Offer
+    price_usd: float
+    ok: bool
+    detail: str
+
+
+def rank_offers(
+    pairs: Sequence[tuple[Provider, Any]],
+    max_price_usd: float,
+    rub_per_usd: float | None,
+) -> list[tuple[float, Provider, Offer]]:
+    """Every in-stock, affordable, USD-priceable offer, cheapest first.
+
+    One entry per provider: a second operator at the same provider is unlikely
+    to behave differently when the first one's codes aren't arriving, and
+    trying it just burns time on a provider already looking unhealthy.
+    """
+    best_per_provider: dict[str, tuple[float, Provider, Offer]] = {}
+    for provider, report in pairs:
+        if not getattr(report, "ok", False):
+            continue
+        for offer in report.offers:
+            if not offer.in_stock:
+                continue
+            usd = _sms.to_usd(offer, rub_per_usd)
+            if usd is None or usd > max_price_usd:
+                continue
+            current = best_per_provider.get(provider.name)
+            if current is None or usd < current[0]:
+                best_per_provider[provider.name] = (usd, provider, offer)
+    return sorted(best_per_provider.values(), key=lambda t: t[0])
+
+
+def acquire_any(
+    pairs: Sequence[tuple[Provider, Any]],
+    cfg: PurchaseConfig,
+    budget: Budget,
+    *,
+    rub_per_usd: float | None = None,
+    max_attempts: int | None = None,
+    on_attempt=None,
+    sleep=time.sleep,
+    now=time.monotonic,
+) -> tuple[Purchase, list[Attempt]]:
+    """Try providers cheapest-first until one actually delivers a code.
+
+    Stock is not delivery: a provider can report numbers available and still
+    never send the SMS, which is the common failure here. So a timeout isn't
+    fatal — cancel that number and move to the next provider.
+
+    Returns the successful purchase plus the log of what was tried.
+    """
+    max_attempts = cfg.max_attempts if max_attempts is None else max_attempts
+    candidates = rank_offers(pairs, budget.max_price_usd, rub_per_usd)
+    if not candidates:
+        raise PurchaseRefused(
+            "no in-stock offer under the price cap that can be priced in USD"
+        )
+
+    attempts: list[Attempt] = []
+    for usd, provider, offer in candidates[:max_attempts]:
+        try:
+            purchase = acquire(
+                provider, offer, cfg, budget,
+                price_usd=usd, sleep=sleep, now=now,
+            )
+        except PurchaseRefused as e:
+            # Budget or config, not the provider. Record and keep going: a
+            # cheaper provider further down the list may still fit.
+            attempts.append(Attempt(provider.name, offer, usd, False, str(e)))
+            if on_attempt:
+                on_attempt(attempts[-1])
+            continue
+        except ProviderError as e:
+            # The number was bought and cancelled, so the charge is reversed on
+            # most providers — hand the budget back before trying the next.
+            budget.refund(usd)
+            attempts.append(Attempt(provider.name, offer, usd, False, str(e)))
+            if on_attempt:
+                on_attempt(attempts[-1])
+            continue
+        attempts.append(
+            Attempt(provider.name, offer, usd, True, f"code {purchase.code}")
+        )
+        if on_attempt:
+            on_attempt(attempts[-1])
+        return purchase, attempts
+
+    tried = ", ".join(f"{a.provider} ({a.detail})" for a in attempts) or "nothing"
+    raise ProviderError(f"no provider delivered a code — tried: {tried}")
 
 
 def pick_offer(reports: Sequence[Any], max_price_usd: float, rub_per_usd: float | None):

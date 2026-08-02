@@ -240,4 +240,10 @@ purchasing:
   code_timeout_seconds: 180
   poll_interval_seconds: 5
 
+  # Stock is not delivery: a provider can report numbers available and still
+  # never send the SMS. On a timeout that number is cancelled (refunded on
+  # most providers) and the next-cheapest provider is tried. This is how many
+  # providers get tried before giving up on the run.
+  max_attempts: 4
+
   log_file: "purchases.csv"

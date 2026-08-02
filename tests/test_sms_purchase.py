@@ -288,6 +288,124 @@ def test_pick_offer_ignores_failed_providers():
     assert pur.pick_offer(reports, max_price_usd=1.0, rub_per_usd=None) is None
 
 
+# --- failover across providers --------------------------------------------
+
+
+def _pair(name, price, count=5, code_ok=True):
+    prov = sp.DaisySms({"api_key": "k", "name": name, "base_url": f"https://{name}"})
+    offer = sp.Offer(name, "Walmart", "wm", "USA", price=price, currency="USD", count=count)
+    return prov, sp.ProviderReport(name, ok=True, offers=[offer])
+
+
+def _router(behaviour: dict):
+    """behaviour: host -> 'code' | 'timeout' | 'nobalance'."""
+    def fake(url, **kw):
+        host = url.split("//")[1].split("/")[0]
+        mode = behaviour.get(host, "timeout")
+        action = (kw.get("params") or {}).get("action")
+        if action == "getNumber":
+            if mode == "nobalance":
+                return "NO_BALANCE"
+            return f"ACCESS_NUMBER:1:+1305555{abs(hash(host)) % 10000:04d}"
+        if action == "setStatus":
+            return "ACCESS_CANCEL"
+        return "STATUS_OK:123456" if mode == "code" else "STATUS_WAIT_CODE"
+    return fake
+
+
+def _clock():
+    t = {"v": 0.0}
+    return (lambda: t["v"]), (lambda s: t.__setitem__("v", t["v"] + 5))
+
+
+def test_failover_moves_on_when_a_provider_never_sends_the_code():
+    sp._request = _router({"a": "timeout", "b": "timeout", "c": "code"})
+    now, sleep = _clock()
+    pairs = [_pair("a", 0.30), _pair("b", 0.40), _pair("c", 0.50)]
+    purchase, attempts = pur.acquire_any(
+        pairs, _cfg(), pur.Budget(), sleep=sleep, now=now
+    )
+    assert purchase.code == "123456"
+    assert [a.provider for a in attempts] == ["a", "b", "c"]
+    assert [a.ok for a in attempts] == [False, False, True]
+
+
+def test_failover_tries_cheapest_first():
+    sp._request = _router({"a": "code", "b": "code", "c": "code"})
+    now, sleep = _clock()
+    pairs = [_pair("a", 0.90), _pair("b", 0.20), _pair("c", 0.50)]
+    _, attempts = pur.acquire_any(pairs, _cfg(), pur.Budget(), sleep=sleep, now=now)
+    assert [a.provider for a in attempts] == ["b"], "should have stopped at the cheapest"
+
+
+def test_cancelled_attempts_do_not_burn_the_run_budget():
+    # Two failures then a success, under a cap that only fits one purchase.
+    # Cancelled numbers are refunded, so the run must still complete.
+    sp._request = _router({"a": "timeout", "b": "timeout", "c": "code"})
+    now, sleep = _clock()
+    budget = pur.Budget(max_price_usd=1.0, max_total_usd=0.60)
+    pairs = [_pair("a", 0.50), _pair("b", 0.50), _pair("c", 0.50)]
+    purchase, attempts = pur.acquire_any(pairs, _cfg(), budget, sleep=sleep, now=now)
+    assert purchase.code == "123456"
+    assert len(attempts) == 3
+    assert abs(budget.spent - 0.50) < 1e-9, "only the successful buy should count"
+
+
+def test_failover_stops_at_max_attempts():
+    sp._request = _router({h: "timeout" for h in "abcdef"})
+    now, sleep = _clock()
+    pairs = [_pair(h, 0.10 * (i + 1)) for i, h in enumerate("abcdef")]
+    seen = []
+    try:
+        pur.acquire_any(pairs, _cfg(), pur.Budget(max_total_usd=99),
+                        max_attempts=3, on_attempt=seen.append, sleep=sleep, now=now)
+        assert False, "should have given up"
+    except sp.ProviderError as e:
+        assert "no provider delivered a code" in str(e)
+    # Six providers available, but max_attempts caps the spend of time and money.
+    assert [a.provider for a in seen] == ["a", "b", "c"], seen
+
+
+def test_failover_survives_a_provider_erroring_on_purchase():
+    # NO_BALANCE on the first is not fatal to the run.
+    sp._request = _router({"a": "nobalance", "b": "code"})
+    now, sleep = _clock()
+    purchase, attempts = pur.acquire_any(
+        [_pair("a", 0.30), _pair("b", 0.40)], _cfg(), pur.Budget(), sleep=sleep, now=now
+    )
+    assert purchase.code == "123456"
+    assert not attempts[0].ok and "NO_BALANCE" in attempts[0].detail
+
+
+def test_failover_reports_when_nothing_is_in_stock():
+    empty = _pair("a", 0.30, count=0)
+    try:
+        pur.acquire_any([empty], _cfg(), pur.Budget())
+        assert False, "should have refused"
+    except pur.PurchaseRefused as e:
+        assert "no in-stock offer" in str(e)
+
+
+def test_rank_offers_takes_one_entry_per_provider():
+    prov = sp.DaisySms({"api_key": "k", "name": "a", "base_url": "https://a"})
+    report = sp.ProviderReport("a", ok=True, offers=[
+        sp.Offer("a", "Walmart", "wm", "USA", "op1", price=0.50, currency="USD", count=3),
+        sp.Offer("a", "Walmart", "wm", "USA", "op2", price=0.20, currency="USD", count=3),
+    ])
+    ranked = pur.rank_offers([(prov, report)], max_price_usd=1.0, rub_per_usd=None)
+    assert len(ranked) == 1 and ranked[0][0] == 0.20
+
+
+def test_failover_progress_is_reported_as_it_happens():
+    sp._request = _router({"a": "timeout", "b": "code"})
+    now, sleep = _clock()
+    seen = []
+    pur.acquire_any([_pair("a", 0.30), _pair("b", 0.40)], _cfg(), pur.Budget(),
+                    on_attempt=seen.append, sleep=sleep, now=now)
+    # Callback fires per attempt, so a long run isn't silent.
+    assert [s.provider for s in seen] == ["a", "b"]
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(list(globals().items())):
