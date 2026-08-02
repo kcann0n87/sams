@@ -89,23 +89,31 @@ Russia through, because each contains "us". Pick the country by id.
 Version 0.9.1: the buy path is pinned from their live catalogue, the poll is
 still unverified.
 
-**Walmart, taken from `GET /api/v1/numbers/services/`** — four separate pools,
-all United States (`667`), all `MIN_15`:
+**Use `wr` on `virtual`.** That's the pool that actually issues numbers.
 
-| Config | Code | Provider |
-|---|---|---|
-| Walmart | `se024415f170e25` | residential |
-| Walmart Family Mobile | `s9629aca71a8b02` | residential |
-| Walmart MoneyCard | `s5e85c951385be4` | residential |
-| Walmart | `wr` | virtual |
+| Config | Code | Provider | Status |
+|---|---|---|---|
+| Walmart | `wr` | virtual | **works** |
+| Walmart | `se024415f170e25` | residential | listed, returns out-of-numbers |
+| Walmart Family Mobile | `s9629aca71a8b02` | residential | untested |
+| Walmart MoneyCard | `s5e85c951385be4` | residential | untested |
+
+All United States (`667`), all `MIN_15`.
+
+The residential entries are a trap worth understanding. `GET /numbers/services/`
+lists them, but its own documentation says it is "deduplicated by service code
+so a service is listed even when its only priced rows are per-country
+sub-variants" — being listed is not the same as having US stock. Requesting one
+gives out-of-numbers on every attempt, which in a task runner reads as a
+five-minute timeout per try rather than an immediate refusal.
+
+That's a shame, because residential is non-VoIP and would have been the better
+answer to Walmart rejecting numbers. `wr` is virtual, same as everything else
+here.
 
 Residential codes are `s` plus a hash; virtual ones are short. The catalogue
 runs to **12,693 entries**, so anything else you need is in there — filter it
 by name rather than guessing a code.
-
-Start with plain **Walmart on residential**. Virtual is cheaper and carries
-the VoIP risk this whole project keeps running into. The other two are
-separate pools worth trying when the first is dry.
 
 **The poll is the guess.** There may be no detail route for a single order, so
 `getMessage` reads `history_sms_code` off the **first** entry of the active

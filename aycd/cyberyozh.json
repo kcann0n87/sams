@@ -1,7 +1,7 @@
 {
   "name": "CyberYozh",
   "description": "app.cyberyozh.com — residential and virtual numbers, X-Api-Key header",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "author": "sams-automation",
   "priceFormat": "USD",
   "credentials": [
@@ -17,16 +17,16 @@
       {
         "name": "provider",
         "label": "Provider type",
-        "description": "residential is non-VoIP and the better bet for retail sites. virtual is cheaper. Rentals are the _rent variants — not what you want for one code.",
+        "description": "virtual is what actually issues Walmart numbers here. residential is non-VoIP and would be preferable, but its Walmart entries returned out-of-numbers on every attempt. Rentals are the _rent variants — not what you want for one code.",
         "required": true,
-        "defaultValue": "residential"
+        "defaultValue": "virtual"
       },
       {
         "name": "service",
         "label": "Service code",
         "description": "Code from GET /numbers/services/. Residential codes look like se024415f170e25; virtual ones are short, like wr.",
         "required": true,
-        "defaultValue": "se024415f170e25"
+        "defaultValue": "wr"
       },
       {
         "name": "country",
@@ -45,7 +45,16 @@
     ],
     "userDataConfigs": [
       {
-        "name": "Walmart — residential",
+        "name": "Walmart — virtual",
+        "values": {
+          "provider": "virtual",
+          "service": "wr",
+          "country": "667",
+          "period": "MIN_15"
+        }
+      },
+      {
+        "name": "Walmart — residential (listed, but returns OON)",
         "values": {
           "provider": "residential",
           "service": "se024415f170e25",
@@ -54,7 +63,7 @@
         }
       },
       {
-        "name": "Walmart Family Mobile — residential",
+        "name": "Walmart Family Mobile — residential (untested)",
         "values": {
           "provider": "residential",
           "service": "s9629aca71a8b02",
@@ -63,19 +72,10 @@
         }
       },
       {
-        "name": "Walmart MoneyCard — residential",
+        "name": "Walmart MoneyCard — residential (untested)",
         "values": {
           "provider": "residential",
           "service": "s5e85c951385be4",
-          "country": "667",
-          "period": "MIN_15"
-        }
-      },
-      {
-        "name": "Walmart — virtual (cheaper, VoIP risk)",
-        "values": {
-          "provider": "virtual",
-          "service": "wr",
           "country": "667",
           "period": "MIN_15"
         }
