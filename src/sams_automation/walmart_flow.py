@@ -74,6 +74,50 @@ class WalmartFlow:
         except Exception:
             pass  # a screenshot failing must never fail the run
 
+    def dump(self, name: str) -> None:
+        """Screenshot plus the page's HTML.
+
+        A screenshot shows a blocked page or an empty one, but it can't tell you
+        what an input is actually called. The HTML can, so save both whenever
+        the page is about to be interacted with or has just refused to be.
+        """
+        self.shot(name)
+        try:
+            (self.shot_dir / f"walmart-{name}.html").write_text(
+                self.page.content(), encoding="utf-8"
+            )
+        except Exception:
+            pass
+
+    def describe(self) -> str:
+        """URL, title and a count of the fields — what to say when a fill fails.
+
+        A timeout on `input[type='email']` looks the same whether the page is a
+        block page, an empty shell, or the right page with different markup.
+        These three numbers tell those apart without opening anything.
+        """
+        try:
+            url = self.page.url
+        except Exception:
+            url = "?"
+        try:
+            title = self.page.title()
+        except Exception:
+            title = "?"
+        counts = []
+        for label, selector in (
+            ("input", "input"),
+            ("email-ish", "input[type='email'], input[name*='email' i], input[id*='email' i]"),
+            ("password", "input[type='password']"),
+            ("button", "button"),
+            ("iframe", "iframe"),
+        ):
+            try:
+                counts.append(f"{label}={self.page.locator(selector).count()}")
+            except Exception:
+                counts.append(f"{label}=?")
+        return f"url={url} title={title!r} " + " ".join(counts)
+
     def _fill(self, key: str, value: str, *, required: bool = True) -> bool:
         selector = (self.cfg.selectors or {}).get(key, "")
         if not selector:
@@ -124,6 +168,11 @@ class WalmartFlow:
         """
         self.page.goto(self.cfg.login_url)
         self.wait_out_captcha()
+        # Before touching anything. If the email field never appears, this pair
+        # of files is the only record of what was actually on screen — the
+        # shot below it is taken after the fill and never gets written.
+        self.dump("login-page")
+        print(f"    login page: {self.describe()}")
         self._fill("login_email", account.email)
         # The decision point: password field, "use a code instead", or a
         # Continue button to a second screen. Whichever it is, this is the
@@ -220,7 +269,12 @@ def add_phone_to_account(
         login_method = flow.login(account, fetch_email_code)
         flow.open_phone_form()
     except Exception as e:
-        return AccountResult(account.email, False, error=f"{type(e).__name__}: {e}")
+        # Capture the page as it stands, not as it was a step ago. Without this
+        # a selector timeout says only which selector missed, never why.
+        flow.dump("error")
+        return AccountResult(
+            account.email, False, error=f"{type(e).__name__}: {e} | {flow.describe()}"
+        )
 
     # Only now is it worth spending money: the form is up and waiting.
     try:

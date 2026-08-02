@@ -216,6 +216,10 @@ def run_add_phone(
             _record(results_file, result)
             status = "OK" if result.ok else "FAIL"
             print(f"  [{status}] {account.email} {result.phone} {result.error}".rstrip())
+            if not result.ok:
+                shots = cfg.browser.screenshot_dir
+                print(f"    page saved: {shots}/walmart-error.png and .html")
+                print(f"    selectors:  python tools/inspect_page.py {shots}/walmart-error.html")
             print(f"    spent so far: ${budget.spent:.2f} of ${budget.max_total_usd:.2f}\n")
 
             if index + 1 < len(accounts):

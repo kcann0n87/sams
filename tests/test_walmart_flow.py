@@ -74,6 +74,15 @@ class FakePage:
     def set_default_timeout(self, ms: int) -> None:
         pass
 
+    # -- what the diagnostics read ----------------------------------------
+    url = "https://wm/login"
+
+    def title(self) -> str:
+        return "Sign in"
+
+    def content(self) -> str:
+        return "<html><body><input type='email'></body></html>"
+
 
 def _flow(page: FakePage, **overrides):
     cfg = load_walmart_config(
@@ -395,6 +404,45 @@ def test_missing_accounts_file_points_at_the_example():
         assert False, "should have raised"
     except FileNotFoundError as e:
         assert "walmart_accounts.example.csv" in str(e)
+
+
+def test_login_page_is_dumped_before_the_first_fill():
+    """The dump has to survive the email field never appearing.
+
+    That was the real failure: every screenshot in login() came after the fill,
+    so a timeout on the email field left no record of the page at all.
+    """
+    page = FakePage(fail_on="#email")
+    flow = _flow(page)
+    try:
+        flow.login(ACCOUNT)
+    except Exception:
+        pass
+    saved = flow.shot_dir / "walmart-login-page.html"
+    assert saved.exists(), "no HTML dump of the login page"
+    assert "input" in saved.read_text()
+
+
+def test_describe_reports_the_page_state():
+    page = FakePage(present={"input[type='password']"})
+    flow = _flow(page)
+    described = flow.describe()
+    assert "url=https://wm/login" in described
+    assert "'Sign in'" in described
+    assert "password=1" in described
+
+
+def test_failure_dumps_the_page_and_says_what_was_on_it():
+    page = FakePage(fail_on="#email")
+    flow = _flow(page)
+    result = add_phone_to_account(flow, ACCOUNT, _never_buys)
+    assert not result.ok
+    assert "url=" in result.error, result.error
+    assert (flow.shot_dir / "walmart-error.html").exists()
+
+
+def _never_buys():
+    raise AssertionError("no money may be spent when login failed")
 
 
 def test_shipped_example_file_parses():
