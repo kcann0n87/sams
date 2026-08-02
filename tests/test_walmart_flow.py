@@ -319,43 +319,44 @@ def _accounts(text: str):
         return load_walmart_accounts(path)
 
 
-def test_accounts_accept_comma_form():
-    accounts = _accounts("email,password\na@example.com,pw1\n")
-    assert [(a.email, a.password) for a in accounts] == [("a@example.com", "pw1")]
-
-
-def test_accounts_accept_colon_form():
+def test_colon_is_the_separator():
     accounts = _accounts("a@example.com:pw1\n")
     assert [(a.email, a.password) for a in accounts] == [("a@example.com", "pw1")]
 
 
-def test_accounts_accept_a_mix_with_no_header():
-    accounts = _accounts("a@example.com,pw1\nb@example.com:pw2\n")
-    assert [a.email for a in accounts] == ["a@example.com", "b@example.com"]
+def test_only_the_first_colon_splits():
+    # A password may contain colons; they belong to the password, not the split.
+    accounts = _accounts("a@example.com:pa:ss:word\n")
+    assert accounts[0].password == "pa:ss:word"
 
 
-def test_accounts_keep_optional_proxy_and_notes():
-    accounts = _accounts("a@example.com,pw1,1.2.3.4:8080,first\nb@example.com,pw2\n")
-    assert accounts[0].proxy == "1.2.3.4:8080" and accounts[0].notes == "first"
-    assert accounts[1].proxy == "" and accounts[1].notes == ""
+def test_a_comma_in_a_password_is_not_a_separator():
+    # This is the whole point of preferring colon over comma.
+    accounts = _accounts("a@example.com:pass,word,123\n")
+    assert accounts[0].password == "pass,word,123"
+    assert accounts[0].proxy == ""
+
+
+def test_comma_form_still_reads_when_there_is_no_colon():
+    # Older files written before the switch must keep working.
+    accounts = _accounts("email,password\na@example.com,pw1\n")
+    assert [(a.email, a.password) for a in accounts] == [("a@example.com", "pw1")]
 
 
 def test_accounts_skip_blanks_comments_and_headers():
-    accounts = _accounts(
-        "email,password\n\n# a comment\na@example.com,pw1\n\n"
-    )
+    accounts = _accounts("email:password\n\n# a comment\na@example.com:pw1\n\n")
     assert len(accounts) == 1
 
 
 def test_bad_lines_are_skipped_not_fatal():
     # One typo in a long pasted list must not lose the other 4,999.
-    accounts = _accounts("a@example.com,pw1\nnotanemail,pw\nc@example.com:pw3\n")
+    accounts = _accounts("a@example.com:pw1\nnotanemail:pw\nc@example.com:pw3\n")
     assert [a.email for a in accounts] == ["a@example.com", "c@example.com"]
 
 
 def test_email_only_lines_are_accepted():
     # Code-based sign-in needs no password, so an email alone is a valid row.
-    accounts = _accounts("a@example.com\nb@example.com,pw2\n")
+    accounts = _accounts("a@example.com\nb@example.com:pw2\n")
     assert [(a.email, a.password) for a in accounts] == [
         ("a@example.com", ""), ("b@example.com", "pw2")
     ]
@@ -366,7 +367,7 @@ def test_a_file_with_nothing_usable_explains_the_format():
         _accounts("garbage\nmore garbage\n")
         assert False, "should have raised"
     except ValueError as e:
-        assert "email" in str(e) and "password is optional" in str(e)
+        assert "email:password" in str(e)
 
 
 def test_missing_accounts_file_points_at_the_example():

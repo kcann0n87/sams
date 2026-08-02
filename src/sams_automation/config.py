@@ -125,17 +125,19 @@ REQUIRED_WALMART_COLUMNS = ["email", "password"]
 def load_walmart_accounts(path: str | Path) -> list[WalmartAccount]:
     """Read the Walmart account list, in whatever shape it's written.
 
-    All of these work, mixed freely, with or without a header row:
+    The format is `email:password`, one per line:
 
-        email
-        email,password
-        email:password
-        email,password,proxy,notes
+        you@gmail.com:hunter2
+        you@gmail.com               (password optional — code sign-in)
 
-    Deliberately forgiving. The realistic input is a list pasted from
-    somewhere else, and rejecting it over a missing header or an extra column
-    is friction for no benefit — the only thing actually required is an
-    address and a password.
+    Everything after the FIRST colon is the password, so a password may itself
+    contain colons or commas without being split. A comma-separated line is
+    still read when it has no colon at all, so older files keep working.
+
+    Deliberately forgiving otherwise: the realistic input is a list pasted from
+    somewhere else, and rejecting it over a header row or a stray blank line is
+    friction for no benefit. The only thing required is an address — signing in
+    with the emailed one-time code, the preferred path, never uses a password.
     """
     path = Path(path)
     if not path.exists():
@@ -155,9 +157,14 @@ def load_walmart_accounts(path: str | Path) -> list[WalmartAccount]:
         if low.startswith("email,password") or low.startswith("email:password"):
             continue
 
-        # Comma wins when present; otherwise colon. An email has no comma, and
-        # no colon before the separator, so the first one is the divider.
-        fields = [f.strip() for f in (line.split(",") if "," in line else line.split(":", 1))]
+        # Colon is the separator, and only the FIRST one counts — an email
+        # never contains one, and a password often contains commas or further
+        # colons that must survive intact. Comma is a fallback for older files
+        # written before this, and only when there's no colon to go on.
+        if ":" in line:
+            fields = [f.strip() for f in line.split(":", 1)]
+        else:
+            fields = [f.strip() for f in line.split(",")]
         email = fields[0] if fields else ""
         password = fields[1] if len(fields) > 1 else ""
         if not email or "@" not in email:
@@ -177,9 +184,9 @@ def load_walmart_accounts(path: str | Path) -> list[WalmartAccount]:
     if not accounts:
         detail = ("\n  " + "\n  ".join(problems[:5])) if problems else ""
         raise ValueError(
-            f"No usable accounts in {path}. Each line needs at least an email "
-            f"address; a password is optional when signing in with the emailed "
-            f"code. Use 'email', 'email,password' or 'email:password'.{detail}"
+            f"No usable accounts in {path}. Each line should be "
+            f"'email:password', or just an email when signing in with the "
+            f"emailed code.{detail}"
         )
     if problems:
         print(f"  Skipped {len(problems)} bad line(s) in {path}:")

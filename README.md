@@ -172,9 +172,19 @@ Buys a verification number and adds it to each account in
 cp walmart_accounts.example.csv walmart_accounts.csv
 ```
 
-Then edit `walmart_accounts.csv` — `email` and `password` are required, `proxy`
-can be left blank to use the rotation from `proxies.txt`. Do a single account
-first, with a visible browser:
+Then edit `walmart_accounts.csv`. One account per line, colon-separated:
+
+```
+you@gmail.com:YourPassword
+you@gmail.com
+```
+
+Everything after the **first** colon is the password, so passwords containing
+colons or commas are safe. The password is optional — sign-in uses the code
+emailed to your catch-all, so an email on its own is a valid line. Proxies come
+from `walmart_proxies.txt`, not from here.
+
+Do a single account first, with a visible browser:
 
 ```bash
 ./start.sh walmart-add-phone --limit 1
