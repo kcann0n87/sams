@@ -12,6 +12,7 @@ Start it with:  python -m sams_automation serve
 from __future__ import annotations
 
 import collections
+import logging
 import subprocess
 import sys
 import threading
@@ -222,11 +223,32 @@ setInterval(tick, 1500);
 """
 
 
+class _QuietPolling(logging.Filter):
+    """Drop the successful status-poll lines from the request log.
+
+    Both pages poll a status endpoint every second or two, which floods the
+    terminal you're supposed to be watching and buries anything that matters.
+    Errors and every other request still get logged.
+    """
+
+    NOISY = ("GET /api/status", "GET /api/sms/status", "GET /favicon.ico")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        line = record.getMessage()
+        return not (any(p in line for p in self.NOISY) and (" 200 " in line or " 404 " in line))
+
+
 def create_app(config_path: str, accounts_path: str) -> Flask:
     app = Flask(__name__)
     job = Job()
     root = Path.cwd()
     register_sms_routes(app, config_path)
+    logging.getLogger("werkzeug").addFilter(_QuietPolling())
+
+    @app.get("/favicon.ico")
+    def favicon() -> Response:
+        # Empty 204 rather than a 404 on every page load.
+        return Response(status=204)
 
     def _cfg():
         return load_config(config_path)
@@ -344,8 +366,9 @@ def serve(config_path: str, accounts_path: str, port: int = 8765,
     app = create_app(config_path, accounts_path)
     port = _free_port(port)  # skip past a leftover instance instead of crashing
     url = f"http://127.0.0.1:{port}/"
-    print(f"\n  Sam's Club automation is running at:  {url}")
-    print("  Leave this window open. Close it (Ctrl-C) to stop.\n")
+    print(f"\n  Sam's Club automation:      {url}")
+    print(f"  SMS providers / Walmart:   {url}sms")
+    print("\n  Leave this window open. Close it (Ctrl-C) to stop.\n")
     if open_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     app.run(host="127.0.0.1", port=port, debug=False)
