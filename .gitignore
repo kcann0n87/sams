@@ -1,6 +1,8 @@
 # Real secrets & data — never commit these
 config.yaml
 accounts.csv
+walmart_accounts.csv
+walmart_results.csv
 proxies.txt
 sms_keys.json
 results.csv

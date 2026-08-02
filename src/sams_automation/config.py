@@ -104,6 +104,67 @@ class Account:
         return f"{self.primary_email} -> {self.secondary_email}"
 
 
+@dataclass
+class WalmartAccount:
+    """One Walmart login we're adding a phone number to."""
+
+    email: str
+    password: str
+    proxy: str = ""      # blank = use the shared rotation from proxies.txt
+    notes: str = ""
+    phone: str = ""      # filled in once a number has been added
+
+    @property
+    def label(self) -> str:
+        return self.email
+
+
+REQUIRED_WALMART_COLUMNS = ["email", "password"]
+
+
+def load_walmart_accounts(path: str | Path) -> list[WalmartAccount]:
+    """Read walmart_accounts.csv.
+
+    Kept separate from load_accounts(): these are Walmart logins receiving a
+    phone number, not Sam's Club memberships gaining a secondary member. The
+    two files have nothing in common but the CSV format.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Walmart account list not found: {path}. "
+            "Copy walmart_accounts.example.csv to it and fill it in."
+        )
+    with path.open(newline="") as fh:
+        reader = csv.DictReader(fh)
+        headers = [h.strip() for h in (reader.fieldnames or [])]
+        missing = [c for c in REQUIRED_WALMART_COLUMNS if c not in headers]
+        if missing:
+            raise ValueError(
+                f"{path} is missing required column(s): {', '.join(missing)}. "
+                f"Found: {', '.join(headers) or '(none)'}"
+            )
+        accounts = []
+        for lineno, row in enumerate(reader, start=2):
+            email = (row.get("email") or "").strip()
+            if not email:
+                continue  # blank padding rows are common in exported CSVs
+            password = (row.get("password") or "").strip()
+            if not password:
+                raise ValueError(f"{path} line {lineno}: {email} has no password")
+            accounts.append(
+                WalmartAccount(
+                    email=email,
+                    password=password,
+                    proxy=(row.get("proxy") or "").strip(),
+                    notes=(row.get("notes") or "").strip(),
+                )
+            )
+    if not accounts:
+        raise ValueError(f"{path} has no accounts in it")
+    return accounts
+
+
 REQUIRED_ACCOUNT_COLUMNS = [
     "primary_email",
     "primary_password",

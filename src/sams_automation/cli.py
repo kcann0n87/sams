@@ -138,6 +138,32 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_walmart(args: argparse.Namespace) -> int:
+    """Log into each Walmart account and add a freshly bought number."""
+    from .config import load_walmart_accounts
+    from .walmart_runner import RESULTS_FILE, load_done, run_add_phone
+
+    accounts = load_walmart_accounts(args.walmart_accounts)
+    if not args.no_resume:
+        done = load_done(RESULTS_FILE)
+        skipped = [a for a in accounts if a.email in done]
+        accounts = [a for a in accounts if a.email not in done]
+        if skipped:
+            print(
+                f"Skipping {len(skipped)} account(s) already done "
+                "(--no-resume to redo them)."
+            )
+
+    results = run_add_phone(
+        args.config,
+        accounts,
+        limit=args.limit,
+        only=args.only,
+        headless=args.headless,
+    )
+    return 0 if results and all(r.ok for r in results) else 1
+
+
 def _cmd_sms_probe(args: argparse.Namespace) -> int:
     """Work out which API protocol an unknown provider speaks."""
     import os
@@ -587,6 +613,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="List every known provider and whether a key was found.",
     )
     sc.set_defaults(func=_cmd_sms_check)
+
+    wm = sub.add_parser(
+        "walmart-add-phone",
+        parents=[common],
+        help="Add a bought verification number to each Walmart account.",
+    )
+    wm.add_argument("--walmart-accounts", default="walmart_accounts.csv")
+    wm.add_argument("--limit", type=int, default=None, help="Only the first N.")
+    wm.add_argument("--only", default=None, help="Just this account email.")
+    wm.add_argument("--no-resume", action="store_true", help="Don't skip done accounts.")
+    wm.add_argument("--headless", action="store_true", help="No browser window.")
+    wm.set_defaults(func=_cmd_walmart)
 
     sp_ = sub.add_parser(
         "sms-probe",

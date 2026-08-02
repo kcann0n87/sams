@@ -272,3 +272,47 @@ purchasing:
   max_attempts: 4
 
   log_file: "purchases.csv"
+
+# =============================================================================
+# Walmart — adding a verification number to an account
+#
+# Used by `python -m sams_automation walmart-add-phone`. Accounts come from
+# walmart_accounts.csv (git-ignored; copy walmart_accounts.example.csv).
+#
+# Every selector below is a PLACEHOLDER until the first run against the real
+# page. Each step is screenshotted to screenshots/walmart-*.png, and when a
+# field can't be found the error names the selector key to fix — so tuning the
+# page map is a config edit, never a code change.
+# =============================================================================
+
+walmart:
+  login_url: "https://www.walmart.com/account/login"
+  phone_url: "https://www.walmart.com/account/profile"
+
+  selectors:
+    # --- Sign-in. Walmart often asks for the email first and the password on a
+    # second screen; leave login_continue empty if it's a single form.
+    login_email: "input[type='email']"
+    login_continue: ""
+    login_password: "input[type='password']"
+    login_submit: "button[type='submit']"
+    # Something that exists only once signed in. Empty = skip the check, which
+    # makes a wrong password look like a page-map problem instead.
+    logged_in_marker: ""
+
+    # --- Getting to the phone form
+    add_phone_button: ""          # empty if phone_url lands on the form itself
+    phone_input: "input[type='tel']"
+    phone_submit: "button[type='submit']"
+
+    # --- Entering the code the provider received
+    code_input: "input[autocomplete='one-time-code']"
+    code_submit: "button[type='submit']"
+
+    # Shown once the number is confirmed. Empty = don't hard-fail yet.
+    success_marker: ""
+
+  # Walmart uses PerimeterX like Sam's Club does. When it appears the run pauses
+  # for you to solve it by hand; it never attempts to solve it itself.
+  captcha_marker: "#px-captcha"
+  captcha_wait_seconds: 300
