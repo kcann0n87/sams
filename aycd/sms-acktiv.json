@@ -27,7 +27,7 @@
       {
         "name": "service",
         "label": "Service Code",
-        "description": "SMS-Acktiv's short code for the service. Find it with this repo's sms-plan command \u2014 codes differ per site even though the protocol doesn't.",
+        "description": "SMS-Acktiv's own short code for the service. Get the list by opening https://sms-acktiv.ru/stubs/handler_api.php?api_key=YOUR_KEY&action=getServicesList in a browser and searching it for the service name. Codes are per-site \u2014 one from another provider will buy the wrong service.",
         "required": true
       },
       {
