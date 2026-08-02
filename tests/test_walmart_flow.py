@@ -550,6 +550,39 @@ def test_the_send_button_is_pressed_when_choosing_only_ticks_the_option():
     assert "proceed" in page.clicked, "never pressed the button that sends the code"
 
 
+def test_a_radio_with_no_text_of_its_own_is_found_via_its_label():
+    """Radio inputs have no inner text, so matching on it discarded them.
+
+    A radio-list chooser is made entirely of these — the wording lives in the
+    label — so none of its options were ever candidates.
+    """
+    ticked = []
+
+    class Radio:
+        def inner_text(self):
+            return ""
+
+        def get_attribute(self, name):
+            return {"aria-label": "Email me a verification code b***9@gmail.com"}.get(name)
+
+        def check(self):
+            ticked.append(1)
+
+    class RadioOnlyPage(FakePage):
+        def locator(self, selector):
+            if selector == WalmartFlow.CLICKABLE_QUERY:
+                class Multi:
+                    def all(self):
+                        return [Radio()]
+                return Multi()
+            return super().locator(selector)
+
+    flow = _flow(RadioOnlyPage(), login_use_code="auto")
+    assert flow.find_code_option() is not None, "the radio was never a candidate"
+    flow._activate(flow.find_code_option())
+    assert ticked, "used click() on a radio instead of check()"
+
+
 def test_auto_falls_back_to_the_password_when_no_code_option_exists():
     page = FakePage()      # no clickables at all
     flow = _flow(page, login_use_code="auto")

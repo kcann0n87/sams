@@ -190,6 +190,59 @@ class WalmartFlow:
         except Exception:
             return ""
 
+    def _option_text(self, element: Any) -> str:
+        """Text identifying a control, including ones with no text of their own.
+
+        A radio input has no inner text at all, so matching on inner_text alone
+        silently discarded exactly the controls a radio-list chooser is made
+        of. Its label carries the wording instead.
+        """
+        text = self._text_of(element)
+        if text:
+            return text
+        for attribute in ("aria-label", "title", "value", "placeholder"):
+            try:
+                value = element.get_attribute(attribute)
+            except Exception:
+                continue
+            if value:
+                return " ".join(str(value).split())
+        try:
+            element_id = element.get_attribute("id")
+        except Exception:
+            element_id = None
+        if element_id:
+            try:
+                label = self.page.locator(f"label[for='{element_id}']")
+                if label.count():
+                    return self._text_of(label.first)
+            except Exception:
+                pass
+        try:                                   # a radio wrapped in its label
+            ancestor = element.locator("xpath=ancestor::label[1]")
+            if ancestor.count():
+                return self._text_of(ancestor.first)
+        except Exception:
+            pass
+        return ""
+
+    @staticmethod
+    def _enabled(element: Any) -> bool:
+        try:
+            return bool(element.is_enabled())
+        except Exception:
+            return True   # can't tell: let the click decide
+
+    @staticmethod
+    def _activate(element: Any) -> None:
+        """Click, or tick if it's a radio — check() handles both correctly."""
+        try:
+            element.check()
+            return
+        except Exception:
+            pass
+        element.click()
+
     def find_code_option(self) -> Any | None:
         """The "email me a one-time code" control on a code-choice screen.
 
@@ -203,18 +256,31 @@ class WalmartFlow:
         clickable parent but can't accidentally be the whole page.
         """
         candidates = []
+        everything = []
         for element in self._clickables():
-            text = self._text_of(element).lower()
-            if not text or not any(w in text for w in self.CODE_WORDS):
+            text = self._option_text(element).lower()
+            if not text:
+                continue
+            everything.append(text)
+            if not any(w in text for w in self.CODE_WORDS):
                 continue
             if not any(w in text for w in self.EMAIL_WORDS):
                 continue
             candidates.append((len(text), element, text))
         if not candidates:
+            # Say what was on the screen. Guessing at markup nobody can see is
+            # how this took several runs to get right the first time.
+            print("    no code option matched. Clickable things on this screen:")
+            for seen in sorted(set(everything), key=len)[:25]:
+                print(f"      {seen[:90]!r}")
             return None
         candidates.sort(key=lambda c: c[0])
         _, element, text = candidates[0]
-        print(f"    code option: {text[:70]!r}")
+        if len(candidates) > 1:
+            print(f"    code option: {text[:70]!r} "
+                  f"(best of {len(candidates)})")
+        else:
+            print(f"    code option: {text[:70]!r}")
         return element
 
     # Ordered best-first. A CSS list can't express preference — it returns
@@ -443,7 +509,7 @@ class WalmartFlow:
             if isinstance(target, str):
                 self.page.click(target)
             else:
-                target.click()
+                self._activate(target)
             self.settle()
             # Picking the method is not the same as asking for the code. On a
             # radio-list chooser the click only ticks the option, and the email
@@ -451,7 +517,17 @@ class WalmartFlow:
             # whole mailbox timeout for a message nobody sent.
             if self._url() == before:
                 proceed = self._first_visible(self.PROCEED_SELECTORS)
-                if proceed is not None:
+                if proceed is None:
+                    print("    nothing to press to send the code")
+                elif not self._enabled(proceed):
+                    # Clicking a disabled button waits the full timeout and
+                    # then blames the click. The real cause is upstream: the
+                    # option never got selected.
+                    print(
+                        "    the send button is disabled — the option didn't "
+                        "take. Nothing was requested"
+                    )
+                else:
                     proceed.click()
                     self.settle()
                     print("    pressed continue to send the code")
