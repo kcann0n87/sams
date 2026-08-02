@@ -622,6 +622,17 @@ class WalmartFlow:
         Returns "code" or "password" for the log.
         """
         self.page.goto(self.cfg.login_url)
+        self.settle()
+        # The profile persists, so a session from a previous run is often still
+        # good. Walmart bounces an already-signed-in visitor off its sign-in
+        # page, and that redirect is the whole test — no selector, no
+        # credentials, and no second bot check for a session that already
+        # cleared one.
+        if not self.signed_out():
+            print("    already signed in — reusing the saved session")
+            self.dismiss_interstitials()
+            self.dump("after-login")
+            return "session"
         if self.cfg.manual_login:
             return self.wait_for_manual_login(account)
         self.wait_out_captcha()

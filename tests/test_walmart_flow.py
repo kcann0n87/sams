@@ -35,6 +35,11 @@ SELECTORS = {
 }
 
 
+# Where a signed-out browser sits, and where it lands once it isn't.
+SIGNED_OUT_URL = "https://identity.walmart.com/account/login"
+SIGNED_IN_URL = "https://www.walmart.com/account"
+
+
 class FakeLocator:
     def __init__(self, n: int):
         self._n = n
@@ -62,6 +67,9 @@ class FakePage:
         # and this is how a test says one is absent.
         self.missing = missing or set()
         self.fail_on = fail_on
+        # An instance copy, so a subclass's starting URL is respected and the
+        # steps below can move it without touching the class.
+        self.url = type(self).url
 
     def goto(self, url: str) -> None:
         self.visited.append(url)
@@ -75,6 +83,7 @@ class FakePage:
         if self.fail_on == selector:
             raise RuntimeError(f"element not found: {selector}")
         self.clicked.append(selector)
+        self._progress()
 
     def locator(self, selector: str) -> FakeLocator:
         if selector in self.missing:
@@ -94,7 +103,15 @@ class FakePage:
         pass
 
     # -- what the diagnostics read ----------------------------------------
-    url = "https://wm/login"
+    # The session check reads this to decide whether signing in is needed at
+    # all, and the sign-in steps move it — a fake whose URL never changed
+    # looked permanently signed out however far the flow got.
+    url = SIGNED_OUT_URL
+    flips_on_click = True
+
+    def _progress(self):
+        if self.flips_on_click:
+            self.url = SIGNED_IN_URL
 
     def title(self) -> str:
         return "Sign in"
@@ -585,7 +602,7 @@ def test_the_send_button_is_pressed_when_choosing_only_ticks_the_option():
 
                     def click(self):
                         page.clicked.append("proceed")
-                        type(page).url = "https://identity.walmart.com/account/verifyitsyou"
+                        page.url = "https://identity.walmart.com/account/verifyitsyou"
 
                     def nth(self, i):
                         return self
@@ -599,13 +616,10 @@ def test_the_send_button_is_pressed_when_choosing_only_ticks_the_option():
     page = RadioChooser()
     flow = _flow(page, login_use_code="auto",
                  login_code_input="auto", login_code_submit="auto")
-    try:
-        # What happens after the code arrives is another test's business; this
-        # one is only about the press that causes it to be sent.
-        with contextlib.suppress(FlowError):
-            flow.login(ACCOUNT, fetch_email_code=lambda: "123456")
-    finally:
-        RadioChooser.url = "https://identity.walmart.com/account/signin/withotpchoice"
+    # What happens after the code arrives is another test's business; this one
+    # is only about the press that causes it to be sent.
+    with contextlib.suppress(FlowError):
+        flow.login(ACCOUNT, fetch_email_code=lambda: "123456")
     assert "proceed" in page.clicked, "never pressed the button that sends the code"
 
 
@@ -692,6 +706,7 @@ class CodeEntryPage(ChoicePage):
 
             def click(self):
                 page.clicked.append(f"element:{selector}")
+                page._progress()
 
             def nth(self, i):
                 return Field(i)
@@ -701,7 +716,10 @@ class CodeEntryPage(ChoicePage):
 
         if selector == "input[maxlength='1']":
             return Field()
-        if selector in (page.field_selector, *WalmartFlow.CODE_SUBMIT_SELECTORS):
+        # The submit search also tries a ":visible"-suffixed variant.
+        if selector in (page.field_selector, *WalmartFlow.CODE_SUBMIT_SELECTORS) or (
+            selector.startswith("button[type='submit']")
+        ):
             return Field()
         if selector in WalmartFlow.CODE_INPUT_SELECTORS:
             class Empty:
@@ -808,6 +826,25 @@ class StillOnLoginPage(FakePage):
     """Sign-in didn't take: every navigation lands back on the identity host."""
 
     url = "https://identity.walmart.com/account/login?tp=X"
+    flips_on_click = False
+
+
+def test_an_existing_session_skips_sign_in_entirely():
+    """The profile persists, so the session often outlives the run.
+
+    Walmart bounces an already-signed-in visitor off its sign-in page, and
+    signing in again would mean another bot check for no reason.
+    """
+    class AlreadyIn(FakePage):
+        url = SIGNED_IN_URL
+
+    page = AlreadyIn()
+    flow = _flow(page)
+    result = add_phone_to_account(flow, ACCOUNT, lambda: (_purchase(), []))
+    assert result.ok, result.error
+    assert result.login_method == "session"
+    assert page.filled.get("#email") is None, "signed in again for no reason"
+    assert page.filled.get("#password") is None
 
 
 def test_resend_code_is_never_mistaken_for_the_submit():
@@ -878,21 +915,18 @@ def test_the_profile_page_redirecting_to_signin_stops_the_run():
     class RedirectsAfterLogin(FakePage):
         """Login looks fine, but the profile page bounces to sign-in."""
 
-        url = "https://www.walmart.com/account"
+        url = SIGNED_IN_URL
 
         def goto(self, url):
             super().goto(url)
             if "profile" in url:
-                type(self).url = "https://identity.walmart.com/account/login"
+                self.url = SIGNED_OUT_URL
 
     bought = []
     page = RedirectsAfterLogin()
-    try:
-        result = add_phone_to_account(
-            _flow(page), ACCOUNT, lambda: (bought.append(1), (_purchase(), []))[1]
-        )
-    finally:
-        RedirectsAfterLogin.url = "https://www.walmart.com/account"
+    result = add_phone_to_account(
+        _flow(page), ACCOUNT, lambda: (bought.append(1), (_purchase(), []))[1]
+    )
     assert not result.ok
     assert "redirected to sign-in" in result.error, result.error
     assert not bought, "spent money before confirming the form was reachable"
@@ -925,7 +959,7 @@ def test_describe_reports_the_page_state():
     page = FakePage(present={"input[type='password']"})
     flow = _flow(page)
     described = flow.describe()
-    assert "url=https://wm/login" in described
+    assert "url=https://identity.walmart.com/account/login" in described
     assert "'Sign in'" in described
     assert "password=1" in described
 
