@@ -165,6 +165,11 @@ provider list, and how to add a site in config without writing code:
 
 ## Adding a phone number to Walmart accounts
 
+**Setting this up for the first time: [docs/WALMART_SETUP.md](docs/WALMART_SETUP.md)**
+— Gmail app password, accounts, proxies, provider keys, and the selector-tuning
+loop, in order.
+
+
 Buys a verification number and adds it to each account in
 `walmart_accounts.csv`, logging in through that account's proxy.
 
