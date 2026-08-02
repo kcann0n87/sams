@@ -665,6 +665,12 @@ KNOWN_ACTIVATE_HOSTS: dict[str, dict[str, str]] = {
 # unlike plain getPrices carries the service display name).
 ACTIVATE_ALIASES: dict[str, str] = {"daisy-sms": "daisysms", "hero-sms": "herosms"}
 
+# Pairs that are the same company reached through two different APIs. Both
+# read one pool, so having both on double-counts the stock.
+DUPLICATE_SOURCES: tuple[tuple[str, str, str], ...] = (
+    ("5sim", "5sim-activate", "native guest feed vs. SMS-Activate-compatible endpoint"),
+)
+
 # Gone, but still the first hit in most search results and tutorials.
 DEAD_PROVIDERS = {"sms-activate": "shut down 2025-12-29; infrastructure moved to hero-sms"}
 
@@ -855,6 +861,16 @@ def build_providers(settings: dict[str, Any] | None) -> tuple[list[Provider], li
     for name, reason in DEAD_PROVIDERS.items():
         if settings.get(name):
             problems.append(f"{name}: {reason}")
+
+    # Same site reached two ways reports the same pool twice, so the totals
+    # double-count. Say so rather than silently dropping one — which to keep
+    # is the user's call (the keyless guest feed vs. their account's pricing).
+    for a, b, note in DUPLICATE_SOURCES:
+        if a in seen and b in seen:
+            problems.append(
+                f"{a} and {b} are the same provider via different APIs ({note}); "
+                f"stock totals will count it twice — disable one"
+            )
 
     # A top-level entry carrying a `protocol` is a provider this code doesn't
     # know built-in — added by the web UI after probing, or hand-written. Treat

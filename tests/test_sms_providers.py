@@ -468,6 +468,21 @@ def test_builtin_supersedes_registry_alias():
     assert daisy[0].prices_action == "getPricesVerification"
 
 
+def test_duplicate_sources_are_flagged():
+    # 5sim's guest feed and its SMS-Activate-compatible endpoint read one pool.
+    with env(FIVESIM_ACTIVATE_API_KEY="k"):
+        built, problems = sp.build_providers({})
+    names = {p.name for p in built}
+    assert {"5sim", "5sim-activate"} <= names
+    assert any("count it twice" in p for p in problems)
+
+
+def test_no_duplicate_warning_when_only_one_is_active():
+    with env():
+        _, problems = sp.build_providers({})
+    assert not any("count it twice" in p for p in problems)
+
+
 def test_dead_provider_is_flagged():
     with env():
         _, problems = sp.build_providers({"sms-activate": {"api_key": "k"}})
@@ -535,7 +550,9 @@ def test_all_registered_hosts_build():
         # aliases resolve to the built-in adapter under its own name
         expected = sp.ACTIVATE_ALIASES.get(name, name)
         assert expected in names, f"{name} did not build"
-    assert problems == []
+    # With every key set, both 5sim front-ends are live, so the double-count
+    # warning is expected. Nothing else should be reported.
+    assert all("count it twice" in p for p in problems), problems
 
 
 def test_to_usd_conversion():

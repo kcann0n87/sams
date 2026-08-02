@@ -81,6 +81,32 @@ signup. A provider offering a "Walmart" service at a low price on VoIP stock
 can still fail every time, so `daisysms` and `textverified` are the two worth
 trusting for this specific target, with `5sim` as the free availability signal.
 
+### 5sim vs 5sim-activate
+
+Same company, same number pool, two different API dialects:
+
+| | `5sim` | `5sim-activate` |
+|---|---|---|
+| API | 5sim's own `/v1/guest/*` endpoints | SMS-Activate-compatible `stubs/handler_api.php` |
+| Key | **none needed** | `FIVESIM_ACTIVATE_API_KEY` |
+| Currency | RUB | your account's |
+| Why it exists | the real, documented API | a shim so tools written for SMS-Activate work unchanged |
+
+**Prefer `5sim`** — it needs no account and reads the same stock. The compat
+endpoint is only useful if you want prices in your account currency, or your
+tooling already speaks that protocol.
+
+Enabling both isn't an error but it double-counts: two views of one pool are
+summed as if they were two. The tool says so rather than quietly inflating the
+number:
+
+```
+Config warning: 5sim and 5sim-activate are the same provider via different
+APIs; stock totals will count it twice — disable one
+```
+
+Set `enabled: false` on whichever you don't want.
+
 ## When nothing has US Walmart stock
 
 This is the normal state, not a bug. US Walmart pools on the resale market are
