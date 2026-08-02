@@ -45,8 +45,20 @@ raw_value = args[1]
 section = data.get(section_name)
 if not isinstance(section, dict):
     sys.exit(f"no section called {section_name!r}. top level: {', '.join(sorted(data))}")
-if key not in section:
-    sys.exit(f"no {section_name}.{key}. keys: {', '.join(sorted(section))}")
+
+# A key the config predates — a setting added after this config.yaml was
+# written. Adding it is right; inventing one from a typo is not. The shipped
+# example is the arbiter of which this is.
+adding = key not in section
+if adding:
+    example = pathlib.Path("config.example.yaml")
+    shipped = {}
+    if example.exists():
+        shipped = ((yaml.safe_load(example.read_text()) or {}).get(section_name)) or {}
+    if key not in shipped:
+        sys.exit(f"no {section_name}.{key}. keys: {', '.join(sorted(section))}")
+    section = {**section, key: shipped[key]}
+    print(f"(your config predates {section_name}.{key} — adding it)")
 
 # Match the type already in the file, so `0` doesn't become the string "0" and
 # quietly mean something else to the code reading it.
@@ -81,15 +93,21 @@ end = re.search(r"^\S", body[len(section_name) + 2:], re.M)
 cut = len(body) if not end else len(section_name) + 2 + end.start()
 head, block, tail = text[: start + 1], body[:cut], body[cut:]
 
-block, count = re.subn(
-    rf"^(\s*){re.escape(key)}:[^\n]*$",
-    lambda m: f"{m.group(1)}{key}: {literal}",
-    block,
-    count=1,
-    flags=re.M,
-)
-if not count:
-    sys.exit(f"couldn't find the {key}: line inside {section_name}:")
+if adding:
+    # Append to the end of the block, matching the indent its neighbours use.
+    indent = re.search(r"^(\s+)\S", block[len(section_name) + 2:], re.M)
+    pad = indent.group(1) if indent else "  "
+    block = block.rstrip("\n") + f"\n{pad}{key}: {literal}\n"
+else:
+    block, count = re.subn(
+        rf"^(\s*){re.escape(key)}:[^\n]*$",
+        lambda m: f"{m.group(1)}{key}: {literal}",
+        block,
+        count=1,
+        flags=re.M,
+    )
+    if not count:
+        sys.exit(f"couldn't find the {key}: line inside {section_name}:")
 cfg.write_text(head + block + tail)
 
 check = yaml.safe_load(cfg.read_text()) or {}

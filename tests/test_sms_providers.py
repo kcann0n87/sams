@@ -798,6 +798,21 @@ def test_check_all_isolates_a_failing_provider():
     assert not by_name["smspool"].ok  # no fixture -> error, but no crash
 
 
+def test_check_all_reports_progress_and_keeps_input_order():
+    """Results stay in the order given even though they finish out of order.
+
+    The callback exists so a slow provider doesn't make the whole check look
+    hung, but the ordered list is what every caller zips against its provider
+    list — getting that wrong would attribute one provider's stock to another.
+    """
+    install({"guest/prices": FIVESIM_PRICES, "guest/products": FIVESIM_CATALOG})
+    providers = [sp.SmsPool({"api_key": "k"}), sp.FiveSim({})]
+    seen = []
+    reports = sp.check_all(providers, on_result=lambda p, r: seen.append(p.name))
+    assert [r.provider for r in reports] == ["smspool", "5sim"]
+    assert sorted(seen) == ["5sim", "smspool"], seen
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(list(globals().items())):

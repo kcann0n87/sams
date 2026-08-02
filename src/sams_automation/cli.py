@@ -168,8 +168,19 @@ def _cmd_sms_plan(args: argparse.Namespace) -> int:
         print("No providers configured. Add API keys on the /sms page first.")
         return 2
 
-    print(f"Checking {len(providers)} provider(s) ...\n")
-    pairs = list(zip(providers, check_all(providers, us_only=not args.worldwide)))
+    print(f"Checking {len(providers)} provider(s) — 30s each at worst ...")
+
+    def progress(provider, report):
+        if not report.ok:
+            state = f"failed: {report.error}"
+        else:
+            live = [o for o in report.offers if o.in_stock]
+            state = f"{len(live)} pool(s) in stock" if live else "nothing in stock"
+        print(f"  {provider.name:<14} {state}")
+
+    reports = check_all(providers, us_only=not args.worldwide, on_result=progress)
+    pairs = list(zip(providers, reports))
+    print()
     ranked = rank_offers(
         pairs, pcfg.max_price_usd, rub_per_usd, allow_unpriced=pcfg.allow_unpriced
     )

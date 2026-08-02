@@ -22,7 +22,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
@@ -1282,14 +1282,31 @@ def check_all(
     *,
     us_only: bool = True,
     max_workers: int = 5,
+    on_result=None,
 ) -> list[ProviderReport]:
-    """Query every provider concurrently — they're independent and slow."""
+    """Query every provider concurrently — they're independent and slow.
+
+    `on_result(provider, report)` fires as each one lands, so a caller can show
+    progress. Without it a slow provider makes the whole check look hung: each
+    request allows 30s, and they run five at a time.
+
+    The returned list stays in `providers` order regardless of finish order.
+    """
     providers = list(providers)
     if not providers:
         return []
+    results: list[ProviderReport | None] = [None] * len(providers)
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = [pool.submit(p.check, terms, us_only=us_only) for p in providers]
-        return [f.result() for f in futures]
+        futures = {
+            pool.submit(p.check, terms, us_only=us_only): i
+            for i, p in enumerate(providers)
+        }
+        for future in as_completed(futures):
+            index = futures[future]
+            results[index] = future.result()
+            if on_result:
+                on_result(providers[index], results[index])
+    return results  # type: ignore[return-value]
 
 
 def to_usd(offer: Offer, rub_per_usd: float | None) -> float | None:
