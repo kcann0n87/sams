@@ -488,6 +488,13 @@ async function saveKey(name){
   loadProviders();
 }
 
+function copyDiag(btn){
+  navigator.clipboard.writeText(window.__probeDiag || '').then(() => {
+    btn.textContent = 'Copied ✓';
+    setTimeout(() => btn.textContent = 'Copy all', 2000);
+  });
+}
+
 async function detectProvider(){
   const name = $('np-name').value.trim(), url = $('np-url').value.trim();
   const key = $('np-key').value.trim();
@@ -521,10 +528,18 @@ async function detectProvider(){
       `<div style="margin:8px 0"><code class="env">${c.ok?'ok ':'ERR'} ${c.method} ${c.url}</code>
        <div class="note" style="margin-left:12px">${(c.detail||'').replace(/</g,'&lt;')}</div></div>`).join('');
 
+    // On a miss the request log IS the answer, so it's open by default and
+    // one click from the clipboard — it's what gets pasted for diagnosis.
+    const diag = (j.calls||[]).map(c =>
+      `${c.ok?'ok ':'ERR'} ${c.method} ${c.url}\n    ${c.detail||''}`).join('\n');
+    window.__probeDiag = `provider: ${name}\nbase_url: ${url}\nresult: ${j.protocol||'no match'}\n\n` + diag;
     $('probeout').innerHTML = head +
       `<table><thead><tr><th>Protocol</th><th>Result</th><th></th></tr></thead>
        <tbody>${tried}</tbody></table>` +
-      (j.saved ? '' : `<details style="margin-top:12px"><summary>Every request tried (${(j.calls||[]).length})</summary>${calls}</details>`);
+      (j.saved ? '' : `<details open style="margin-top:12px">
+         <summary>Every request tried (${(j.calls||[]).length}) — paste this for help</summary>
+         <button class="secondary small" style="margin:10px 0" onclick="copyDiag(this)">Copy all</button>
+         ${calls}</details>`);
     if (j.saved){ $('np-key').value = ''; loadProviders(); }
   } finally {
     $('b-detect').disabled = false; $('b-detect').textContent = 'Detect';

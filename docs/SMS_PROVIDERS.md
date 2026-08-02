@@ -96,16 +96,17 @@ Same company, same number pool, two different API dialects:
 endpoint is only useful if you want prices in your account currency, or your
 tooling already speaks that protocol.
 
-Enabling both isn't an error but it double-counts: two views of one pool are
-summed as if they were two. The tool says so rather than quietly inflating the
-number:
+Enabling both would double-count — two views of one pool summed as if they
+were two sources. So the keyed one wins automatically and the public feed is
+dropped, with a line saying so:
 
 ```
-Config warning: 5sim and 5sim-activate are the same provider via different
-APIs; stock totals will count it twice — disable one
+Config: 5sim skipped — same pool as 5sim-activate, which has a key
 ```
 
-Set `enabled: false` on whichever you don't want.
+The public feed is only dropped when the keyed one is actually configured.
+With no `FIVESIM_ACTIVATE_API_KEY`, `5sim` stays on — it's the one provider
+that works with no account at all, and losing it would leave you blind.
 
 ## When nothing has US Walmart stock
 

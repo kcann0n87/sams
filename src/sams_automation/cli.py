@@ -363,7 +363,7 @@ def _cmd_sms_check(args: argparse.Namespace) -> int:
     rub_per_usd = settings.get("rub_per_usd")
     providers, problems = build_providers(settings)
     for problem in problems:
-        print(f"Config warning: {problem}", file=sys.stderr)
+        print(f"Config: {problem}", file=sys.stderr)
 
     if args.list_providers:
         return _sms_list_providers(providers, settings)

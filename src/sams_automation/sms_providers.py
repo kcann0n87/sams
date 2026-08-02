@@ -665,10 +665,12 @@ KNOWN_ACTIVATE_HOSTS: dict[str, dict[str, str]] = {
 # unlike plain getPrices carries the service display name).
 ACTIVATE_ALIASES: dict[str, str] = {"daisy-sms": "daisysms", "hero-sms": "herosms"}
 
-# Pairs that are the same company reached through two different APIs. Both
-# read one pool, so having both on double-counts the stock.
+# Same company reached through two different APIs, as (keyed, public, why).
+# Both read one pool, so running both double-counts the stock. The keyed side
+# wins: it's tied to the account you'd actually buy through, and it prices in
+# your own currency, so the keyless public feed adds nothing once it's present.
 DUPLICATE_SOURCES: tuple[tuple[str, str, str], ...] = (
-    ("5sim", "5sim-activate", "native guest feed vs. SMS-Activate-compatible endpoint"),
+    ("5sim-activate", "5sim", "5sim's SMS-Activate-compatible endpoint vs. its public guest feed"),
 )
 
 # Gone, but still the first hit in most search results and tutorials.
@@ -862,14 +864,15 @@ def build_providers(settings: dict[str, Any] | None) -> tuple[list[Provider], li
         if settings.get(name):
             problems.append(f"{name}: {reason}")
 
-    # Same site reached two ways reports the same pool twice, so the totals
-    # double-count. Say so rather than silently dropping one — which to keep
-    # is the user's call (the keyless guest feed vs. their account's pricing).
-    for a, b, note in DUPLICATE_SOURCES:
-        if a in seen and b in seen:
+    # Same site reached two ways reports one pool twice. Drop the keyless
+    # public feed when the keyed one is configured — it's redundant then, and
+    # summing both inflates the stock total.
+    for keyed, public, why in DUPLICATE_SOURCES:
+        if keyed in seen and public in seen:
+            out = [p for p in out if p.name != public]
+            seen.discard(public)
             problems.append(
-                f"{a} and {b} are the same provider via different APIs ({note}); "
-                f"stock totals will count it twice — disable one"
+                f"{public} skipped — same pool as {keyed}, which has a key ({why})"
             )
 
     # A top-level entry carrying a `protocol` is a provider this code doesn't
