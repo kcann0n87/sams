@@ -15,6 +15,7 @@ from typing import Any
 
 from .config import WalmartAccount
 from .sms_purchase import Budget, acquire_any, load_purchase_config
+from .stealth import STEALTH_INIT_JS
 from .walmart_flow import AccountResult, WalmartFlow, add_phone_to_account, load_walmart_config
 
 RESULTS_FILE = "walmart_results.csv"
@@ -174,6 +175,14 @@ def run_add_phone(
                 page = browser.new_context().new_page()
             try:
                 page.set_default_timeout(cfg.browser.timeout_ms)
+                # The Sam's Club flow has applied these from the start; this one
+                # never did, so every session advertised navigator.webdriver
+                # before the page had even loaded. Not a bypass — the challenge
+                # still appears and still needs a human — it just stops the most
+                # obvious automation tell provoking one a real browser wouldn't
+                # get.
+                if cfg.browser.stealth:
+                    page.add_init_script(STEALTH_INIT_JS)
                 flow = WalmartFlow(page, wcfg, cfg.browser.screenshot_dir)
 
                 def acquire():
