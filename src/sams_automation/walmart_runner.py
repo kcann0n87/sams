@@ -109,7 +109,20 @@ def run_add_phone(
             proxies = []
         if proxies:
             pool = ProxyPool(proxies, rotation)
-            print(f"  rotation: {rotation}\n")
+            print(f"  rotation: {rotation}")
+            # A profile that persists carries cookies and a fingerprint, so a
+            # rotating IP makes it a returning visitor who teleports — a
+            # stronger bot signal than either setting alone.
+            if profile_dir and rotation in ("fresh", "random", "round_robin"):
+                print(
+                    "\n  WARNING: a persistent profile with '" + rotation + "' rotation "
+                    "sends one\n  browser identity from a different IP every run, which "
+                    "invites more\n  bot checks than either setting alone. Pick one:\n"
+                    "    - returning customer: keep user_data_dir, use rotation 'sticky'\n"
+                    "      (or proxies.enabled: false to use your own IP)\n"
+                    "    - new visitor each time: clear user_data_dir, keep 'fresh'"
+                )
+            print()
         else:
             print("  running without proxies\n")
 
