@@ -184,6 +184,15 @@ sms_providers:
   smspool:
     api_key: ""            # or export SMSPOOL_API_KEY
 
+  # smspva.com speaks its own API (priemnik.php), not the activate protocol.
+  # Its services are opaque "optNN" codes rather than names, so unlike every
+  # other provider the Walmart service can't be discovered by name — look it up
+  # once on smspva.com's service list and set it here. A missing code is
+  # reported as configuration, not as an empty pool.
+  smspva:
+    api_key: ""            # or export SMSPVA_API_KEY
+    service_code: ""       # e.g. "opt99" — required; nothing safe to default to
+
   # --- sites on the shared "activate" (handler_api) protocol ----------------
   # These need nothing but a key — the base URL is already registered. Set the
   # key here or export the variable shown by --list-providers:
