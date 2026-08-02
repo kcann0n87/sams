@@ -149,7 +149,20 @@ class WalmartFlow:
     # accounts that phone is the number we're about to add.
     EMAIL_WORDS = ("email", "e-mail", "@")
 
-    CLICKABLE_QUERY = "button, [role=button], [data-automation-id], [data-testid], a"
+    # Walmart's method chooser is a radio list, so the option itself is a
+    # label or a radio rather than anything that reads as a button.
+    CLICKABLE_QUERY = (
+        "button, [role=button], [role=radio], input[type=radio], label, "
+        "[data-automation-id], [data-testid], a"
+    )
+    # Choosing a method often only ticks the radio; the email is sent by a
+    # separate press.
+    PROCEED_SELECTORS = (
+        "button:has-text('Continue')",
+        "button:has-text('Send')",
+        "button:has-text('Next')",
+        "button[type='submit']",
+    )
 
     def _clickables(self) -> list[Any]:
         try:
@@ -159,8 +172,21 @@ class WalmartFlow:
 
     @staticmethod
     def _text_of(element: Any) -> str:
+        """The element's visible text, untruncated.
+
+        Truncating here broke the ranking in find_code_option: every candidate
+        longer than the cap tied at the cap, so "smallest text wins" picked
+        whichever came first — which was the container wrapping the whole
+        screen, heading included. Clicking that did nothing.
+        """
         try:
-            return " ".join((element.inner_text() or "").split())[:70]
+            return " ".join((element.inner_text() or "").split())
+        except Exception:
+            return ""
+
+    def _url(self) -> str:
+        try:
+            return str(self.page.url)
         except Exception:
             return ""
 
@@ -188,7 +214,7 @@ class WalmartFlow:
             return None
         candidates.sort(key=lambda c: c[0])
         _, element, text = candidates[0]
-        print(f"    code option: {text!r}")
+        print(f"    code option: {text[:70]!r}")
         return element
 
     # Ordered best-first. A CSS list can't express preference — it returns
@@ -413,13 +439,30 @@ class WalmartFlow:
             method = "code"
             # A string is a configured selector; anything else is an element
             # the text search already has a handle on.
+            before = self._url()
             if isinstance(target, str):
                 self.page.click(target)
             else:
                 target.click()
             self.settle()
+            # Picking the method is not the same as asking for the code. On a
+            # radio-list chooser the click only ticks the option, and the email
+            # is sent by a separate press — without it the run waits out the
+            # whole mailbox timeout for a message nobody sent.
+            if self._url() == before:
+                proceed = self._first_visible(self.PROCEED_SELECTORS)
+                if proceed is not None:
+                    proceed.click()
+                    self.settle()
+                    print("    pressed continue to send the code")
             self.wait_out_captcha()
+            if self._url() == before:
+                print(
+                    "    WARNING: still on the same screen — the code may not "
+                    "have been sent"
+                )
             self.dump("login-code-requested")
+            print(f"    code requested: {self.describe()}")
             code = fetch_email_code()
             if not code:
                 raise FlowError(

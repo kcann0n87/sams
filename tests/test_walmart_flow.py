@@ -8,6 +8,7 @@ Run with:  python tests/test_walmart_flow.py   (or)   python -m pytest
 
 from __future__ import annotations
 
+import contextlib
 import sys
 import tempfile
 from pathlib import Path
@@ -461,8 +462,11 @@ class ChoicePage(FakePage):
     OPTIONS = [
         "Text a one-time passcode to (***) ***-1234",
         "Email a one-time passcode to b***9@gmail.com",
-        # The wrapper around the email option: same words, more of them.
-        "Email a one-time passcode to b***9@gmail.com Choose how to sign in",
+        # The container wrapping the whole screen. Both of these run past the
+        # old 70-character truncation, so ranking on the truncated length tied
+        # them and picked whichever came first — this one.
+        "Choose a sign in method Email me a verification code b***9@gmail.com "
+        "or Text me a verification code (***) ***-1234 Continue",
     ]
 
     def locator(self, selector):
@@ -499,6 +503,51 @@ def test_auto_finds_the_emailed_code_option_and_never_the_sms_one():
     assert page.filled["#logincode"] == "424242"
     # The tightest match, not the wrapper that swallows the heading.
     assert "element:Email a one-time passcode to b***9@gmail.com" in page.clicked
+
+
+def test_the_send_button_is_pressed_when_choosing_only_ticks_the_option():
+    """A radio chooser doesn't send anything on its own.
+
+    Without the follow-up press the run waited out the full mailbox timeout
+    for an email nobody had asked for.
+    """
+    class RadioChooser(ChoicePage):
+        """Clicking an option changes nothing; Continue does the sending."""
+
+        url = "https://identity.walmart.com/account/signin/withotpchoice"
+
+        def locator(self, selector):
+            if selector in WalmartFlow.PROCEED_SELECTORS:
+                page = self
+
+                class Button:
+                    def is_visible(self):
+                        return True
+
+                    def click(self):
+                        page.clicked.append("proceed")
+                        type(page).url = "https://identity.walmart.com/account/verifyitsyou"
+
+                    def nth(self, i):
+                        return self
+
+                    def count(self):
+                        return 1
+
+                return Button()
+            return super().locator(selector)
+
+    page = RadioChooser()
+    flow = _flow(page, login_use_code="auto",
+                 login_code_input="auto", login_code_submit="auto")
+    try:
+        # What happens after the code arrives is another test's business; this
+        # one is only about the press that causes it to be sent.
+        with contextlib.suppress(FlowError):
+            flow.login(ACCOUNT, fetch_email_code=lambda: "123456")
+    finally:
+        RadioChooser.url = "https://identity.walmart.com/account/signin/withotpchoice"
+    assert "proceed" in page.clicked, "never pressed the button that sends the code"
 
 
 def test_auto_falls_back_to_the_password_when_no_code_option_exists():
