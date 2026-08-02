@@ -730,6 +730,68 @@ def test_the_code_field_is_found_when_it_is_not_the_expected_shape():
     assert page.typed == ["123456"]
 
 
+def test_segmented_boxes_without_maxlength_still_get_one_digit_each():
+    """Walmart's boxes carry no maxlength, so the obvious check missed them.
+
+    All six digits went into the first box, which reads as a wrong code at
+    Walmart's end and is indistinguishable from a bad mailbox read.
+    """
+    values: dict[int, str] = {}
+
+    class Box:
+        def __init__(self, index):
+            self.index = index
+
+        def is_visible(self):
+            return True
+
+        def fill(self, value):
+            values[self.index] = value
+
+        def input_value(self):
+            return values.get(self.index, "")
+
+        def click(self):
+            pass
+
+    class SixBoxes(FakePage):
+        url = "https://identity.walmart.com/account/signin/otponly"
+
+        def locator(self, selector):
+            if selector == "input[maxlength='1']":       # what Walmart lacks
+                class Empty:
+                    def count(self):
+                        return 0
+                return Empty()
+            if selector == "input[inputmode='numeric']":
+                class Six:
+                    def count(self):
+                        return 6
+
+                    def nth(self, i):
+                        return Box(i)
+                return Six()
+            if selector in WalmartFlow.CODE_SUBMIT_SELECTORS:
+                class Button:
+                    def is_visible(self):
+                        return True
+
+                    def nth(self, i):
+                        return self
+
+                    def count(self):
+                        return 1
+
+                    def click(self):
+                        pass
+                return Button()
+            return super().locator(selector)
+
+    flow = _flow(SixBoxes(), login_code_input="auto", login_code_submit="auto")
+    assert flow.enter_code("622767")
+    assert "".join(values[i] for i in sorted(values)) == "622767", values
+
+
 def test_a_segmented_code_field_gets_one_digit_per_box():
     # A single fill would put all six characters in the first box.
     page = CodeEntryPage(boxes=6)

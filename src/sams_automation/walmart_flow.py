@@ -374,6 +374,56 @@ class WalmartFlow:
                 return found
         return None
 
+    # Shapes a segmented code entry takes. maxlength=1 is the obvious one and
+    # not the only one — Walmart's boxes carry neither that nor a name.
+    CODE_FIELD_QUERIES = (
+        "input[maxlength='1']",
+        "input[inputmode='numeric']",
+        "input[type='tel']",
+        "form input[type='text']",
+    )
+
+    def _code_fields(self) -> list[Any]:
+        """The visible inputs making up the code entry, in page order.
+
+        Returns several for a segmented layout, one for a single field. The
+        first query that finds anything visible wins, so a broad fallback can
+        sit at the end without swallowing the specific ones.
+        """
+        for selector in self.CODE_FIELD_QUERIES:
+            try:
+                located = self.page.locator(selector)
+                total = located.count()
+            except Exception:
+                continue
+            fields = []
+            for index in range(min(total, 12)):
+                try:
+                    item = located.nth(index)
+                    if item.is_visible():
+                        fields.append(item)
+                except Exception:
+                    continue
+            if fields:
+                return fields
+        return []
+
+    def _check_code_entry(self, code: str) -> None:
+        """Warn if what landed in the boxes isn't the code we typed.
+
+        Six digits in the first box of a six-box field looks like success from
+        here and fails at Walmart, which is indistinguishable from a wrong
+        code unless someone says so.
+        """
+        try:
+            entered = "".join(
+                (field.input_value() or "") for field in self._code_fields()
+            )
+        except Exception:
+            return
+        if entered and entered != code:
+            print(f"    WARNING: the field(s) now read {entered!r}, not {code!r}")
+
     def enter_code(self, code: str) -> bool:
         """Type the sign-in code and submit. False if no field was found.
 
@@ -384,21 +434,29 @@ class WalmartFlow:
         if explicit and explicit.lower() != "auto":
             self.page.fill(explicit, code)
         else:
-            try:
-                boxes = self.page.locator("input[maxlength='1']")
-                segmented = boxes.count()
-            except Exception:
-                segmented = 0
-            if segmented >= len(code):
+            fields = self._code_fields()
+            if len(fields) >= len(code):
                 for position, digit in enumerate(code):
-                    boxes.nth(position).fill(digit)
+                    fields[position].fill(digit)
                 print(f"    code entered across {len(code)} boxes")
             else:
-                field = self._first_visible(self.CODE_INPUT_SELECTORS)
+                field = fields[0] if fields else self._first_visible(
+                    self.CODE_INPUT_SELECTORS
+                )
                 if field is None:
                     return False
-                field.fill(code)
-                print("    code entered")
+                # Type rather than fill. A segmented field this didn't
+                # recognise still ends up correct, because the page moves focus
+                # between boxes itself as each character arrives — whereas a
+                # fill puts the whole code into the first box.
+                try:
+                    field.click()
+                    self.page.keyboard.type(code, delay=60)
+                    print("    code typed")
+                except Exception:
+                    field.fill(code)
+                    print("    code entered")
+            self._check_code_entry(code)
 
         submit = str((self.cfg.selectors or {}).get("login_code_submit", "")).strip()
         if submit and submit.lower() != "auto":
