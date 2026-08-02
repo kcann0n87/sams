@@ -52,6 +52,31 @@ Tested against a stubbed CyberYozh that reproduces the async assignment:
 - **Timeout** — if no number is assigned within the window, it returns `504`
   with the order id, so the order can be chased manually rather than lost.
 
+## Every purchase costs money the moment it is made
+
+CyberYozh charges on `POST /numbers/`, not on delivery. A run with several
+tasks in parallel buys a number per task, and any task that dies before
+submitting the number to the site leaves a paid order sitting unused.
+
+The relay cancels an order it gave up waiting on, so a timeout refunds rather
+than abandons. It cannot help with numbers a task bought and then dropped —
+for those:
+
+```
+python cyberyozh_orders.py --key YOUR_KEY
+```
+
+Lists every active order with its number, status, and whether a code arrived.
+Then, to hand back the ones that never received anything:
+
+```
+python cyberyozh_orders.py --key YOUR_KEY --cancel-unused
+```
+
+If most of your orders show "no code yet", the site never sent one — usually
+because the task failed before submitting the number, not because the provider
+is at fault.
+
 ## Worth knowing
 
 It binds to `127.0.0.1`, so nothing outside your machine can reach it. It

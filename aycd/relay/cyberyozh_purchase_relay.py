@@ -39,7 +39,7 @@ import requests
 CYBER_BASE = "https://app.cyberyozh.com/api/v1"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
-DEFAULT_ASSIGNMENT_TIMEOUT = 40.0
+DEFAULT_ASSIGNMENT_TIMEOUT = 90.0
 DEFAULT_POLL_INTERVAL = 2.0
 REQUEST_TIMEOUT = (15.0, 30.0)
 
@@ -99,6 +99,28 @@ class RelayHandler(BaseHTTPRequestHandler):
             "X-Api-Key": self.api_key() or "",
             "Content-Type": "application/json",
         }
+
+    def cancel_order(self, order_id: str) -> bool:
+        """Give an unassigned order back. It was charged the moment it was made.
+
+        Without this, every timeout leaves a paid number nobody is watching —
+        the account fills up with orders that will never receive a code.
+        """
+        try:
+            result = self.cyber.put(
+                f"{CYBER_BASE}/numbers/{order_id}/cancel/",
+                headers=self.cyber_headers(),
+                timeout=REQUEST_TIMEOUT,
+            )
+        except requests.RequestException as exc:
+            print(f"Could not cancel {order_id}: {exc}")
+            return False
+        if result.status_code in (200, 201, 202, 204):
+            print(f"Cancelled unassigned order {order_id} — refunded")
+            return True
+        print(f"Cancel of {order_id} refused: HTTP {result.status_code} "
+              f"{result.text[:160]}")
+        return False
 
     def passthrough(self, response: requests.Response) -> None:
         try:
@@ -187,8 +209,19 @@ class RelayHandler(BaseHTTPRequestHandler):
                 print(f"Polling error: {exc}")
                 continue
 
+            if detail.status_code == 429:
+                # Their rate limit. Polling harder makes it worse, and with
+                # several tasks buying at once this is easy to hit.
+                print(f"Rate limited polling {order_id}; backing off")
+                time.sleep(self.server.poll_interval * 3)
+                continue
+
             if detail.status_code != 200:
-                print(f"Polling GET /numbers/{order_id}/ -> HTTP {detail.status_code}")
+                # A 404 straight after creation is normal here — the order is
+                # not queryable until it has been assigned.
+                if detail.status_code != 404:
+                    print(f"Polling GET /numbers/{order_id}/ -> "
+                          f"HTTP {detail.status_code}")
                 continue
 
             try:
@@ -208,14 +241,21 @@ class RelayHandler(BaseHTTPRequestHandler):
                 )
                 return
 
+        # Charged but never assigned. Hand it back before giving up.
+        refunded = self.cancel_order(order_id)
         self.send_json(
             504,
             {
                 "detail": (
                     "CyberYozh accepted the purchase, but no phone number was "
                     "assigned within the timeout."
+                    + (" The order was cancelled and refunded."
+                       if refunded else
+                       " The order could NOT be cancelled — check it manually,"
+                       " it has been charged.")
                 ),
                 "order_id": order_id,
+                "cancelled": refunded,
             },
         )
 
@@ -228,6 +268,10 @@ def main() -> None:
         "--assignment-timeout", type=float, default=DEFAULT_ASSIGNMENT_TIMEOUT
     )
     parser.add_argument("--poll-interval", type=float, default=DEFAULT_POLL_INTERVAL)
+    parser.add_argument(
+        "--no-cancel-on-timeout", action="store_true",
+        help="Leave unassigned orders alone instead of refunding them.",
+    )
     args = parser.parse_args()
 
     server = RelayServer((args.host, args.port), RelayHandler)
