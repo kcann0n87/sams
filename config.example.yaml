@@ -303,6 +303,18 @@ walmart:
   # Remove this line entirely to inherit browser.channel.
   channel: "chromium"
 
+  # A persistent browser profile, kept between runs. Walmart uses PerimeterX,
+  # and a fresh profile with no history gets challenged on nearly every visit.
+  # Solving one press-and-hold in a profile that persists usually means far
+  # fewer afterward — the same trick the Sam's Club flow uses.
+  #
+  # This does NOT bypass anything: the challenge still appears and still has to
+  # be solved by you. It just stops you solving a new one every single time.
+  #
+  # One profile holds one signed-in identity, so it suits `--limit 1` runs.
+  # Leave it empty for multi-account batches.
+  user_data_dir: ""        # e.g. "walmart-profile"
+
   # --- Mailbox for the SIGN-IN code ------------------------------------------
   # At sign-in Walmart offers a password or an emailed one-time code. The flow
   # always takes the code, so it needs to read the catch-all this points at.

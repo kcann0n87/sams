@@ -71,7 +71,18 @@ def run_add_phone(
     # A config written before this key existed would have hit exactly that.
     channel = str((raw.get("walmart") or {}).get("channel") or "chromium").strip().lower()
     channel = None if channel in ("", "chromium") else channel
-    print(f"Browser: {channel or 'chromium (Playwright build)'}")
+    profile_dir = str((raw.get("walmart") or {}).get("user_data_dir") or "").strip()
+    print(
+        f"Browser: {channel or 'chromium (Playwright build)'}"
+        + (f", persistent profile at {profile_dir}" if profile_dir else ", fresh profile")
+    )
+    if profile_dir and len(accounts) > 1:
+        # One profile can't hold several signed-in identities, and a shared
+        # profile also means a shared IP story across accounts.
+        print(
+            "  NOTE: a persistent profile is shared by every account in this run. "
+            "Use --limit 1, or leave user_data_dir unset for multi-account runs."
+        )
 
     print("Checking provider stock once for the whole run ...")
     pairs, _ = _providers_with_stock(config_path)
@@ -121,14 +132,30 @@ def run_add_phone(
                 if pool.exhausted:
                     print("    (pool wrapped around — IPs are being reused)")
 
-            browser = pw.chromium.launch(
-                headless=headless,
-                channel=channel,
-                slow_mo=cfg.browser.slow_mo_ms,
-                proxy=proxy,
-            )
-            try:
+            # A persistent profile is the difference between "unknown browser,
+            # no history" and a browser that has been used before. Solve one
+            # challenge by hand and the profile is usually trusted afterward,
+            # which is the same approach the Sam's Club flow takes. It's not a
+            # bypass — the challenge still has to be solved, once.
+            if profile_dir:
+                context = pw.chromium.launch_persistent_context(
+                    user_data_dir=profile_dir,
+                    headless=headless,
+                    channel=channel,
+                    slow_mo=cfg.browser.slow_mo_ms,
+                    proxy=proxy,
+                )
+                browser = context
+                page = context.pages[0] if context.pages else context.new_page()
+            else:
+                browser = pw.chromium.launch(
+                    headless=headless,
+                    channel=channel,
+                    slow_mo=cfg.browser.slow_mo_ms,
+                    proxy=proxy,
+                )
                 page = browser.new_context().new_page()
+            try:
                 page.set_default_timeout(cfg.browser.timeout_ms)
                 flow = WalmartFlow(page, wcfg, cfg.browser.screenshot_dir)
 
