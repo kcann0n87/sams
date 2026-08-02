@@ -269,7 +269,17 @@ purchasing:
   # never send the SMS. On a timeout that number is cancelled (refunded on
   # most providers) and the next-cheapest provider is tried. This is how many
   # providers get tried before giving up on the run.
+  # 0 means no cap: work through every pool in the rotation. The spend limits
+  # above are what actually stop a runaway, so while you're finding out which
+  # pools deliver, 0 is the useful setting.
   max_attempts: 4
+
+  # Some APIs report stock without a price — TextVerified's Walmart pools do.
+  # Left false those pools are skipped entirely, because a cost that isn't
+  # known can't be checked against max_price_usd beforehand. Set true and they
+  # join the rotation last, charged against the budget at max_price_usd, so
+  # the ceiling holds by assuming the worst case instead of by skipping them.
+  allow_unpriced: false
 
   log_file: "purchases.csv"
 

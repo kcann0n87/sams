@@ -455,6 +455,51 @@ def test_rank_offers_breaks_price_ties_on_success_rate():
     assert [r[2].operator for r in ranked] == ["good", "bad"]
 
 
+def _mixed_priced_and_not():
+    """A provider whose API prices one pool and not the other.
+
+    TextVerified is the live example: its Walmart pools report availability
+    with no price attached.
+    """
+    prov = sp.DaisySms({"api_key": "k", "name": "a", "base_url": "https://a"})
+    report = sp.ProviderReport("a", ok=True, offers=[
+        sp.Offer("a", "Walmart", "wm", "USA", "priced", price=0.60,
+                 currency="USD", count=3),
+        sp.Offer("a", "Walmart", "wmu", "USA", "unpriced", price=None, count=3),
+    ])
+    return [(prov, report)]
+
+
+def test_unpriced_pools_are_skipped_by_default():
+    ranked = pur.rank_offers(_mixed_priced_and_not(), max_price_usd=1.0, rub_per_usd=None)
+    assert [r[2].operator for r in ranked] == ["priced"]
+
+
+def test_unpriced_pools_join_the_rotation_last_when_allowed():
+    # Last, not cheapest-first: an unknown price could be anything up to the
+    # cap, so a confirmed cheaper pool is always tried before it.
+    ranked = pur.rank_offers(
+        _mixed_priced_and_not(), max_price_usd=1.0, rub_per_usd=None, allow_unpriced=True
+    )
+    assert [r[2].operator for r in ranked] == ["priced", "unpriced"]
+    # Charged at the cap, so the spend ceiling still holds on a blind buy.
+    assert ranked[-1][0] == 1.0
+
+
+def test_zero_max_attempts_means_every_pool():
+    # Five pools, only the last delivering — the default cap of 4 would give up
+    # one short of it.
+    sp._request = _router({"e": "code"})
+    now, sleep = _clock()
+    pairs = [_pair(n, 0.10 * i) for i, n in enumerate("abcde", 1)]
+    purchase, attempts = pur.acquire_any(
+        pairs, _cfg(max_attempts=0), pur.Budget(max_total_usd=50.0),
+        sleep=sleep, now=now,
+    )
+    assert purchase.provider == "e"
+    assert len(attempts) == 5, "stopped before reaching every pool"
+
+
 def test_bad_key_skips_that_providers_remaining_pools():
     # A dead key kills every pool at the site, so don't spend attempts on them.
     sp._request = _router({"a": "nobalance", "b": "code"})

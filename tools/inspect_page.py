@@ -15,6 +15,9 @@ import sys
 from html.parser import HTMLParser
 
 INTERESTING = {"input", "button", "a", "select", "textarea", "form", "iframe"}
+# Void elements have no end tag, so they must never go on the open stack —
+# otherwise every following run of text gets attributed to the last <input>.
+VOID = {"input", "iframe", "br", "img", "hr", "source", "area", "embed"}
 # Attributes worth turning into a selector, best first.
 IDENT = ("id", "name", "data-automation-id", "data-testid", "aria-label", "type")
 
@@ -32,12 +35,16 @@ class Collector(HTMLParser):
             self._in_title = True
         if tag in INTERESTING:
             self.found.append((tag, {k: (v or "") for k, v in attrs}, ""))
-            self._open.append(len(self.found) - 1)
+            if tag not in VOID:
+                self._open.append(len(self.found) - 1)
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
 
     def handle_endtag(self, tag):
         if tag == "title":
             self._in_title = False
-        if tag in INTERESTING and self._open:
+        if tag in INTERESTING and tag not in VOID and self._open:
             self._open.pop()
 
     def handle_data(self, data):
@@ -70,8 +77,19 @@ def describe(tag: str, attrs: dict[str, str], text: str) -> str:
             bits.append(f"{key}={value[:40]!r}")
     if text:
         bits.append(f"text={text!r}")
-    if attrs.get("hidden") is not None or attrs.get("type") == "hidden":
-        bits.append("HIDDEN")
+    # Whether an element is fillable is the difference between the right
+    # selector and a 30-second timeout, so flag anything that won't be.
+    style = attrs.get("style", "").replace(" ", "").lower()
+    if (
+        attrs.get("hidden") is not None
+        or attrs.get("type") == "hidden"
+        or attrs.get("aria-hidden") == "true"
+        or "display:none" in style
+        or "visibility:hidden" in style
+    ):
+        bits.append("NOT VISIBLE")
+    if attrs.get("disabled") is not None:
+        bits.append("DISABLED")
     return "  ".join(bits)
 
 

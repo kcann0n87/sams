@@ -498,6 +498,9 @@ class PurchaseConfig:
     code_timeout_seconds: int = 180
     poll_interval_seconds: int = 5
     max_attempts: int = 4
+    # Try in-stock pools whose API reports no price. Off by default: the cap
+    # can only be enforced on a cost that is known in advance.
+    allow_unpriced: bool = False
     log_file: str = PURCHASE_LOG
 
 
@@ -587,6 +590,7 @@ def load_purchase_config(raw: dict[str, Any] | None) -> PurchaseConfig:
         code_timeout_seconds=int(raw.get("code_timeout_seconds", 180)),
         poll_interval_seconds=int(raw.get("poll_interval_seconds", 5)),
         max_attempts=int(raw.get("max_attempts", 4)),
+        allow_unpriced=bool(raw.get("allow_unpriced", False)),
         log_file=str(raw.get("log_file", PURCHASE_LOG)),
     )
 
@@ -606,6 +610,7 @@ def rank_offers(
     pairs: Sequence[tuple[Provider, Any]],
     max_price_usd: float,
     rub_per_usd: float | None,
+    allow_unpriced: bool = False,
 ) -> list[tuple[float, Provider, Offer]]:
     """Every in-stock, affordable, USD-priceable offer, cheapest first.
 
@@ -613,8 +618,15 @@ def rank_offers(
     (different operators, or separate service entries), and they don't share
     stock or delivery rates — one can be dead while the next works. Skipping
     them would throw away most of the available options.
+
+    Some APIs report stock without a price — TextVerified's Walmart pools are
+    the live example. Those are excluded by default, because a purchase whose
+    cost isn't known can't be checked against the cap beforehand. With
+    `allow_unpriced` they go last and are charged at the cap, so the guard rail
+    holds by assuming the worst case rather than by skipping them.
     """
     ranked: list[tuple[float, Provider, Offer]] = []
+    unpriced: list[tuple[float, Provider, Offer]] = []
     for provider, report in pairs:
         if not getattr(report, "ok", False):
             continue
@@ -622,13 +634,20 @@ def rank_offers(
             if not offer.in_stock:
                 continue
             usd = _sms.to_usd(offer, rub_per_usd)
-            if usd is None or usd > max_price_usd:
+            if usd is None:
+                if allow_unpriced:
+                    unpriced.append((max_price_usd, provider, offer))
+                continue
+            if usd > max_price_usd:
                 continue
             ranked.append((usd, provider, offer))
     # Cheapest first; ties broken by the provider's own success rate when it
     # reports one, so a 90%-delivery pool is tried before a 40% one at the
     # same price.
-    return sorted(ranked, key=lambda t: (t[0], -(t[2].success_rate or 0)))
+    by_cost = sorted(ranked, key=lambda t: (t[0], -(t[2].success_rate or 0)))
+    # Known prices first regardless: an unpriced pool could cost anything up to
+    # the cap, so it is the last resort, not a peer of a confirmed $0.35 one.
+    return by_cost + sorted(unpriced, key=lambda t: -(t[2].success_rate or 0))
 
 
 # Provider-wide failures: no other pool at that site will work either, so the
@@ -663,11 +682,18 @@ def acquire_any(
     Returns the successful purchase plus the log of what was tried.
     """
     max_attempts = cfg.max_attempts if max_attempts is None else max_attempts
-    candidates = rank_offers(pairs, budget.max_price_usd, rub_per_usd)
+    candidates = rank_offers(
+        pairs, budget.max_price_usd, rub_per_usd, allow_unpriced=cfg.allow_unpriced
+    )
     if not candidates:
         raise PurchaseRefused(
             "no in-stock offer under the price cap that can be priced in USD"
         )
+    # 0 means "every pool" — the point of the cap is to stop a runaway spend,
+    # and the budget already does that, so counting pools by hand to set this
+    # is busywork. The spend caps still apply either way.
+    if max_attempts <= 0:
+        max_attempts = len(candidates)
 
     attempts: list[Attempt] = []
     dead_providers: set[str] = set()

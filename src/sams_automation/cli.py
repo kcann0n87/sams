@@ -140,6 +140,109 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_sms_plan(args: argparse.Namespace) -> int:
+    """Show the exact order the purchase step will try pools in, buying nothing.
+
+    The add-phone run only reaches the rotation once a browser is signed in and
+    sitting on the phone form, which makes it a slow way to find out that the
+    order is wrong or that the cap stops it early. This prints the same list
+    `acquire_any` walks, from the same live stock check.
+    """
+    from pathlib import Path
+
+    import yaml
+
+    from .config import load_sms_settings
+    from .sms_providers import build_providers, check_all, to_usd
+    from .sms_purchase import load_purchase_config, rank_offers
+
+    raw = yaml.safe_load(Path(args.config).read_text()) or {}
+    settings = load_sms_settings(args.config)
+    rub_per_usd = settings.get("rub_per_usd")
+    pcfg = load_purchase_config(raw.get("purchasing"))
+
+    providers, problems = build_providers(settings)
+    for problem in problems:
+        print(f"Config: {problem}")
+    if not providers:
+        print("No providers configured. Add API keys on the /sms page first.")
+        return 2
+
+    print(f"Checking {len(providers)} provider(s) ...\n")
+    pairs = list(zip(providers, check_all(providers, us_only=not args.worldwide)))
+    ranked = rank_offers(
+        pairs, pcfg.max_price_usd, rub_per_usd, allow_unpriced=pcfg.allow_unpriced
+    )
+    unpriced_in_rotation = {id(offer) for _, _, offer in ranked
+                            if to_usd(offer, rub_per_usd) is None}
+
+    if ranked:
+        print(f"Rotation order — {len(ranked)} pool(s), cheapest first:")
+        for index, (usd, provider, offer) in enumerate(ranked, 1):
+            stock = "?" if offer.count is None else str(offer.count)
+            rate = f"  {offer.success_rate:.0f}%" if offer.success_rate else ""
+            # An unpriced pool is charged at the cap, so say the number shown is
+            # a worst case rather than a quote.
+            cost = f"${usd:.2f}" if id(offer) not in unpriced_in_rotation else f"<=${usd:.2f}"
+            print(
+                f"  {index:2}. {provider.name:<14} {offer.service[:26]:<26} "
+                f"({offer.service_code}) {cost}  stock {stock}{rate}"
+            )
+    else:
+        print("Nothing to rotate through: no in-stock pool is priceable in USD "
+              f"under the ${pcfg.max_price_usd:.2f} cap.")
+
+    # Anything in stock that ranking dropped, and the reason. Without this an
+    # empty or short list looks like the provider has nothing.
+    excluded = []
+    for provider, report in pairs:
+        if not report.ok:
+            excluded.append((provider.name, "-", f"check failed: {report.error}"))
+            continue
+        for offer in report.offers:
+            if not offer.in_stock:
+                excluded.append((provider.name, offer.service, "pool empty"))
+                continue
+            usd = to_usd(offer, rub_per_usd)
+            if usd is None:
+                if id(offer) in unpriced_in_rotation:
+                    continue  # in the rotation, just priced pessimistically
+                excluded.append((
+                    provider.name, offer.service,
+                    "no USD price — set purchasing.allow_unpriced: true to try it",
+                ))
+            elif usd > pcfg.max_price_usd:
+                excluded.append((
+                    provider.name, offer.service,
+                    f"${usd:.2f} is over the ${pcfg.max_price_usd:.2f} cap",
+                ))
+    if excluded:
+        print(f"\nNot in the rotation ({len(excluded)}):")
+        for name, service, why in excluded:
+            print(f"  {name:<14} {service[:26]:<26} {why}")
+
+    if ranked:
+        cap = pcfg.max_attempts
+        if cap <= 0:
+            print(f"\nAttempt cap: none — all {len(ranked)} pools would be tried "
+                  "(purchasing.max_attempts: 0).")
+        elif cap < len(ranked):
+            print(f"\nAttempt cap: {cap} (purchasing.max_attempts).")
+            print(
+                f"  Only the first {cap} of {len(ranked)} pools would be tried before\n"
+                "  giving up. Set purchasing.max_attempts: 0 to work through every\n"
+                "  one of them — the spend caps still stop a runaway."
+            )
+        else:
+            print(f"\nAttempt cap: {cap} (purchasing.max_attempts).")
+            print("  Enough to reach every pool listed above.")
+    if pcfg.dry_run:
+        print("\npurchasing.dry_run is true — a real run refuses at the first buy.")
+    elif not pcfg.enabled:
+        print("\npurchasing.enabled is false — a real run buys nothing.")
+    return 0
+
+
 def _cmd_walmart(args: argparse.Namespace) -> int:
     """Log into each Walmart account and add a freshly bought number."""
     from .config import load_walmart_accounts
@@ -637,6 +740,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="List every known provider and whether a key was found.",
     )
     sc.set_defaults(func=_cmd_sms_check)
+
+    pl = sub.add_parser(
+        "sms-plan",
+        parents=[common],
+        help="Show the order pools would be tried in when buying. Buys nothing.",
+    )
+    pl.add_argument(
+        "--worldwide",
+        action="store_true",
+        help="Include non-US pools (US-only by default).",
+    )
+    pl.set_defaults(func=_cmd_sms_plan)
 
     wm = sub.add_parser(
         "walmart-add-phone",

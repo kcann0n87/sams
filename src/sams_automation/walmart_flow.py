@@ -177,7 +177,7 @@ class WalmartFlow:
         # The decision point: password field, "use a code instead", or a
         # Continue button to a second screen. Whichever it is, this is the
         # screenshot that identifies the selectors, so take it unconditionally.
-        self.shot("login-email-entered")
+        self.dump("login-email-entered")
 
         # Walmart splits email and password across two screens, so a "continue"
         # button between them is optional rather than assumed.
@@ -185,14 +185,14 @@ class WalmartFlow:
         if cont:
             self.page.click(cont)
             self.wait_out_captcha()
-            self.shot("login-after-continue")
+            self.dump("login-after-continue")
 
         use_code = (self.cfg.selectors or {}).get("login_use_code", "")
         if use_code and fetch_email_code is not None:
             method = "code"
             self.page.click(use_code)
             self.wait_out_captcha()
-            self.shot("login-code-requested")
+            self.dump("login-code-requested")
             code = fetch_email_code()
             if not code:
                 raise FlowError(
@@ -212,7 +212,7 @@ class WalmartFlow:
             self.page.click(self._sel("login_submit"))
 
         self.wait_out_captcha()
-        self.shot("after-login")
+        self.dump("after-login")
 
         marker = (self.cfg.selectors or {}).get("logged_in_marker", "")
         if marker and self.page.locator(marker).count() == 0:
@@ -228,19 +228,19 @@ class WalmartFlow:
         add = (self.cfg.selectors or {}).get("add_phone_button", "")
         if add:
             self.page.click(add)
-        self.shot("phone-form")
+        self.dump("phone-form")
 
     def submit_phone(self, national_number: str) -> None:
         self._fill("phone_input", national_number)
         self.page.click(self._sel("phone_submit"))
         self.wait_out_captcha()
-        self.shot("phone-submitted")
+        self.dump("phone-submitted")
 
     def submit_code(self, code: str) -> None:
         self._fill("code_input", code)
         self.page.click(self._sel("code_submit"))
         self.wait_out_captcha()
-        self.shot("code-submitted")
+        self.dump("code-submitted")
 
     def confirm(self) -> bool:
         """True if the success marker is present, or none is configured."""
