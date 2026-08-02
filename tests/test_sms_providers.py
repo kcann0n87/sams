@@ -406,8 +406,11 @@ def test_probe_still_prefers_the_default_path_when_both_work():
     seen = []
 
     def fake(url, **kw):
-        seen.append(url)
-        if (kw.get("params") or {}).get("action") == "getServicesList":
+        import urllib.parse
+
+        params = kw.get("params") or {}
+        seen.append(url + ("?" + urllib.parse.urlencode(params) if params else ""))
+        if params.get("action") == "getServicesList":
             return json.dumps(DAISY_SERVICES)
         return json.dumps(DAISY_PRICES)
     sp._request = fake
