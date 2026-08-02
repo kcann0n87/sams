@@ -1,0 +1,78 @@
+{
+  "name": "Grizzly SMS",
+  "description": "api.grizzlysms.com \u2014 handler_api.php protocol, plain-text responses",
+  "version": "1.0.0",
+  "author": "sams-automation",
+  "priceFormat": "USD",
+  "credentials": [
+    {
+      "name": "apiKey",
+      "label": "API Key",
+      "description": "grizzlysms.com > profile > API key",
+      "required": true
+    }
+  ],
+  "generalApi": {
+    "getBalance": {
+      "method": "GET",
+      "url": "https://api.grizzlysms.com/stubs/handler_api.php?api_key=${credentials.apiKey}&action=getBalance",
+      "responseType": "TEXT",
+      "responseMapping": {
+        "balance": "^ACCESS_BALANCE:"
+      }
+    }
+  },
+  "tempApi": {
+    "userDataFields": [
+      {
+        "name": "service",
+        "label": "Service Code",
+        "description": "Grizzly SMS's short code for the service. Find it with this repo's sms-plan command \u2014 codes differ per site even though the protocol doesn't.",
+        "required": true
+      },
+      {
+        "name": "country",
+        "label": "Country ID",
+        "description": "Numeric country id. 187 is the United States across this family.",
+        "required": true,
+        "defaultValue": "187"
+      }
+    ],
+    "userDataConfigs": [
+      {
+        "name": "US \u2014 set the service code",
+        "values": {
+          "country": "187",
+          "service": ""
+        }
+      }
+    ],
+    "getPhoneNumber": {
+      "method": "GET",
+      "url": "https://api.grizzlysms.com/stubs/handler_api.php?api_key=${credentials.apiKey}&action=getNumber&service=${userData.service}&country=${userData.country}",
+      "responseType": "TEXT",
+      "responseMapping": {
+        "phoneNumber": "^ACCESS_NUMBER:\\d+:",
+        "orderId": "^ACCESS_NUMBER:|:\\d+$"
+      }
+    },
+    "getMessage": {
+      "method": "GET",
+      "url": "https://api.grizzlysms.com/stubs/handler_api.php?api_key=${credentials.apiKey}&action=getStatus&id=${session.orderId}",
+      "responseType": "TEXT",
+      "responseMapping": {
+        "message": "^STATUS_OK:"
+      },
+      "pendingCheck": {
+        "type": "BODY_CONTAINS",
+        "value": "STATUS_WAIT"
+      },
+      "pollingIntervalSeconds": 5
+    },
+    "cancelPhoneNumber": {
+      "method": "GET",
+      "url": "https://api.grizzlysms.com/stubs/handler_api.php?api_key=${credentials.apiKey}&action=setStatus&id=${session.orderId}&status=8",
+      "responseType": "TEXT"
+    }
+  }
+}

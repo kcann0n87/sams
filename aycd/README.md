@@ -14,7 +14,12 @@ browser flow in the rest of this repo, and nothing to do with bot checks.
 | `secureiosms.json` | secureiosms.com | No — bespoke API |
 | `smspool.json` | smspool.net | Possibly |
 | `smsbower.json` | smsbower.online | Maybe |
-| `activate-protocol.json` | DaisySMS, HeroSMS, tiger-sms, grizzly-sms, sms-acktiv, simsms, smshub | Some |
+| `grizzly-sms.json` | api.grizzlysms.com | Maybe |
+| `simsms.json` | simsms.org | Maybe |
+| `sms-acktiv.json` | sms-acktiv.ru | Maybe |
+| `sms-activation.json` | sms-activation-service.com | Maybe |
+| `smshub.json` | smshub.org | Maybe |
+| `activate-protocol.json` | any other handler_api.php clone — edit the host | Some |
 | `cyberyozh.json` | app.cyberyozh.com | No — and it sells **residential** numbers |
 
 ## How much to trust these
@@ -168,6 +173,35 @@ other service, add the key to this repo and ask:
 ```
 
 Every pool it lists shows its code in brackets.
+
+### grizzly-sms, simsms, sms-acktiv, sms-activation, smshub
+
+The same protocol as SMSBower, each aimed at its own host, so none needs the
+host edit the generic file does:
+
+| File | Host |
+|---|---|
+| `grizzly-sms.json` | `api.grizzlysms.com` |
+| `simsms.json` | `simsms.org` |
+| `sms-acktiv.json` | `sms-acktiv.ru` |
+| `sms-activation.json` | `sms-activation-service.com` |
+| `smshub.json` | `smshub.org` |
+
+**Every one ships with a blank service code**, and unlike SMSBower's `wr`
+these haven't been confirmed against a live catalogue. Country `187` is the
+United States throughout. To find a site's own code for Walmart, put its key
+in this repo and run:
+
+```
+.venv/bin/python -m sams_automation sms-plan
+```
+
+Each pool prints with its code in brackets. Don't assume `wr` carries over —
+it happens to be Walmart on SMSBower and on CyberYozh's virtual pool, but
+these sites number their catalogues independently.
+
+Two of these hosts are `.ru` and may be slow or blocked depending on where you
+run from. If a schema times out rather than erroring, that's usually why.
 
 ### activate-protocol.json
 One schema for a dozen sites — they all clone `handler_api.php`. **Edit the
