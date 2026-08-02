@@ -156,6 +156,17 @@ INDEX_HTML = """<!doctype html>
   </div>
 
   <div class="card">
+    <h2>Walmart — add a phone number</h2>
+    <p class="note" id="wmstatus">checking…</p>
+    <div class="row">
+      <button class="primary" onclick="post('/api/walmart/run?limit=1')" id="b-wm1">Run 1 account</button>
+      <button class="primary" onclick="if(confirm('Run every account?'))post('/api/walmart/run')" id="b-wmall">Run all accounts</button>
+      <a href="/sms" class="note" style="margin-left:auto">SMS providers &amp; stock &rarr;</a>
+    </div>
+    <p class="note" id="wmhint"></p>
+  </div>
+
+  <div class="card">
     <h2>Live progress</h2>
     <div id="log"></div>
   </div>
@@ -192,13 +203,35 @@ async function savePw(){
   document.getElementById('pwmsg').textContent = j.ok ? 'Saved ✓' : ('Error: '+(j.error||'failed'));
   if(j.ok){ document.getElementById('pw').value=''; loadInfo(); }
 }
+async function loadWalmart(){
+  const w = await jget('/api/walmart/info');
+  const missing = [];
+  if (!w.accounts) missing.push('accounts (walmart_accounts.csv)');
+  if (!w.imap_ready) missing.push('Gmail app password (walmart.imap)');
+  if (!w.use_code) missing.push('login_use_code selector — will use the password instead');
+  const bits = [
+    `${w.accounts} account(s)`,
+    w.proxies ? `${w.proxies} proxies` : 'no proxies',
+    w.dry_run ? 'DRY RUN — nothing will be bought'
+              : (w.purchasing_enabled ? '⚠ LIVE — real money' : 'purchasing off'),
+  ];
+  document.getElementById('wmstatus').innerHTML =
+    bits.join(' · ') + (w.accounts_error ? ` — <span style="color:#b3261e">${w.accounts_error}</span>` : '');
+  document.getElementById('wmhint').textContent = missing.length
+    ? 'Still to set up: ' + missing.join('; ')
+    : 'Ready. Output and screenshots appear below.';
+  for (const b of ['b-wm1','b-wmall'])
+    document.getElementById(b).disabled = !w.accounts;
+}
+
 let lastLen = 0;
 async function tick(){
   const s = await jget('/api/status');
   const pill = document.getElementById('statuspill');
   pill.textContent = s.running ? ('running: '+s.kind) : 'idle';
   pill.className = 'pill ' + (s.running ? 'run':'idle');
-  for (const b of ['b-imap','b-run1','b-runall']) document.getElementById(b).disabled = s.running;
+  for (const b of ['b-imap','b-run1','b-runall','b-wm1','b-wmall'])
+    document.getElementById(b).disabled = s.running;
   document.getElementById('b-stop').disabled = !s.running;
   const log = document.getElementById('log');
   log.textContent = s.lines.join('\\n');
@@ -215,7 +248,9 @@ async function tick(){
      '<div style="margin:4px 0"><a href="/screenshots/'+encodeURIComponent(n)+'" download>'+n+'</a></div>').join('');
 }
 loadInfo();
+loadWalmart();
 tick();
+setInterval(loadWalmart, 5000);
 setInterval(tick, 1500);
 </script>
 </body>
@@ -317,6 +352,59 @@ def create_app(config_path: str, accounts_path: str) -> Flask:
             args += ["--limit", str(int(limit))]
         ok = job.start("run", _py_cli(*args), root)
         return jsonify(started=ok)
+
+    @app.post("/api/walmart/run")
+    def api_walmart_run():
+        """Run the add-phone flow, streaming into the same log panel."""
+        args = ["walmart-add-phone"]
+        limit = request.args.get("limit")
+        if limit:
+            args += ["--limit", str(int(limit))]
+        if request.args.get("no_resume") == "1":
+            args.append("--no-resume")
+        ok = job.start("walmart-add-phone", _py_cli(*args), root)
+        return jsonify(started=ok)
+
+    @app.get("/api/walmart/info")
+    def api_walmart_info():
+        """How much is set up, so the page can say what's missing."""
+        import yaml
+
+        from .config import load_walmart_accounts
+
+        try:
+            accounts = load_walmart_accounts("walmart_accounts.csv")
+            n_accounts, accounts_error = len(accounts), ""
+        except Exception as e:
+            n_accounts, accounts_error = 0, str(e)
+
+        raw = {}
+        try:
+            raw = yaml.safe_load(Path(config_path).read_text()) or {}
+        except Exception:
+            pass
+        walmart = raw.get("walmart") or {}
+        purchasing = raw.get("purchasing") or {}
+        imap_user = ((walmart.get("imap") or {}).get("username") or "")
+        proxy_file = (walmart.get("proxies") or {}).get("file") or "walmart_proxies.txt"
+        try:
+            n_proxies = sum(
+                1 for line in Path(proxy_file).read_text().splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            )
+        except OSError:
+            n_proxies = 0
+
+        return jsonify(
+            accounts=n_accounts,
+            accounts_error=accounts_error,
+            imap_user=imap_user,
+            imap_ready=bool(imap_user) and "you@gmail.com" not in imap_user,
+            proxies=n_proxies,
+            dry_run=bool(purchasing.get("dry_run", True)),
+            purchasing_enabled=bool(purchasing.get("enabled", False)),
+            use_code=bool((walmart.get("selectors") or {}).get("login_use_code")),
+        )
 
     @app.post("/api/stop")
     def api_stop():
