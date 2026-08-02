@@ -304,6 +304,61 @@ def test_smspool_no_walmart_service():
     assert report.ok and report.offers == []
 
 
+# --- pvacodes / verifysms -------------------------------------------------
+
+
+def test_pvacodes_unwraps_the_status_envelope():
+    install({"api.php": {"status": {"code": "1000", "message": "ok"},
+                         "data": {"Walmart": {"price": 0.60, "count": 8},
+                                  "Facebook": {"price": 0.30}}}})
+    report = sp.PvaCodes({"api_key": "k"}).check()
+    assert report.ok, report.error
+    assert [(o.service, o.price, o.count) for o in report.offers] == [("Walmart", 0.60, 8)]
+
+
+def test_pvacodes_treats_a_non_1000_status_as_an_error():
+    # These arrive as HTTP 200, so the envelope is the only signal.
+    for code, fragment in [("1002", "invalid API key"), ("1003", "Insufficient balance"),
+                           ("2000", "Out of stock")]:
+        install({"api.php": {"status": {"code": code, "message": fragment}, "data": ""}})
+        report = sp.PvaCodes({"api_key": "k"}).check()
+        assert not report.ok, f"{code} should not read as success"
+        assert code in (report.error or "")
+
+
+def test_verifysms_finds_walmart_by_name_not_hardcoded_code():
+    install({"api/services": {"fc": {"name": "Walmart", "cost": 0.5, "in_stock": True},
+                              "ty": {"name": "DoorDash", "cost": 0.5, "in_stock": True}}})
+    report = sp.VerifySms({"api_key": "k"}).check()
+    assert report.ok, report.error
+    assert {o.service_code for o in report.offers} == {"fc"}
+
+
+def test_verifysms_offers_one_candidate_per_carrier():
+    # Carriers are separate pools; each is its own failover candidate.
+    install({"api/services": {"fc": {"name": "Walmart", "cost": 0.5, "in_stock": True}}})
+    report = sp.VerifySms({"api_key": "k"}).check()
+    assert [o.operator for o in report.offers] == ["verizon", "att", "tmobile"]
+
+
+def test_verifysms_respects_the_in_stock_boolean():
+    # No count is reported, so the boolean is the only stock signal.
+    install({"api/services": {"fc": {"name": "Walmart", "cost": 0.5, "in_stock": False}}})
+    report = sp.VerifySms({"api_key": "k"}).check()
+    assert report.offers and not any(o.in_stock for o in report.offers)
+
+    install({"api/services": {"fc": {"name": "Walmart", "cost": 0.5, "in_stock": True}}})
+    report = sp.VerifySms({"api_key": "k"}).check()
+    assert all(o.in_stock for o in report.offers)
+
+
+def test_every_configured_site_now_has_an_adapter():
+    assert sp.UNKNOWN_PROTOCOL_SITES == {}
+    for expected in ("smspva", "secureiosms", "pvacodes", "verifysms",
+                     "5sim", "textverified", "smspool"):
+        assert expected in sp.PROVIDERS, expected
+
+
 # --- handler path variants ------------------------------------------------
 
 
@@ -321,11 +376,15 @@ def test_activate_default_path_is_unchanged():
     assert prov._endpoint() == "https://x.example/stubs/handler_api.php"
 
 
-def test_pvacodes_uses_its_own_handler_path():
+def test_pvacodes_is_its_own_protocol_not_an_activate_clone():
+    # app/api.php looks like a handler_api path but takes do= verbs, not
+    # action=, so it needs its own adapter rather than a path override.
     with env(PVACODES_API_KEY="k"):
         built, _ = sp.build_providers({})
     pv = {p.name: p for p in built}["pvacodes"]
-    assert pv._endpoint() == "https://beta.pvacodes.com/app/api.php"
+    assert isinstance(pv, sp.PvaCodes)
+    assert not isinstance(pv, sp.SmsActivateCompat)
+    assert "pvacodes" not in sp.KNOWN_ACTIVATE_HOSTS
 
 
 def test_probe_finds_the_protocol_on_a_non_default_path():
@@ -355,7 +414,13 @@ def test_probe_still_prefers_the_default_path_when_both_work():
 
     sp.probe("https://both.example", "k")
     assert "stubs/handler_api.php" in seen[0], "should try the common path first"
-    assert not any("app/api.php" in u for u in seen), "shouldn't keep looking after a hit"
+    # Scoped to the activate protocol: pvacodes probes app/api.php too, but
+    # with do= verbs rather than action=.
+    activate_calls = [u for u in seen if "action=" in u]
+    assert activate_calls, "the activate probe should have run"
+    assert not any("app/api.php" in u for u in activate_calls), (
+        "activate probe kept trying paths after a hit"
+    )
 
 
 # --- smspva (its own protocol) --------------------------------------------
@@ -398,13 +463,13 @@ def test_smspva_is_reachable_as_a_protocol():
 def test_unknown_protocol_sites_are_named_not_hidden():
     # Real sites with real APIs we haven't identified — they must be listed so
     # they can be probed, not silently absent.
-    assert set(sp.UNKNOWN_PROTOCOL_SITES) == {"verifysms"}
+    # Sites graduate out of this list once their protocol is known; every one
+    # currently in use now has an adapter.
     for name, url in sp.UNKNOWN_PROTOCOL_SITES.items():
         assert url.startswith("https://"), name
-    # A site graduates out of this list once its protocol is known.
-    assert "pvacodes" not in sp.UNKNOWN_PROTOCOL_SITES
-    assert "pvacodes" in sp.KNOWN_ACTIVATE_HOSTS
-    assert "secureiosms" in sp.PROVIDERS
+    for graduated in ("pvacodes", "secureiosms", "verifysms"):
+        assert graduated not in sp.UNKNOWN_PROTOCOL_SITES
+        assert graduated in sp.PROVIDERS
 
 
 # --- protocol probing -----------------------------------------------------

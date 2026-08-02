@@ -67,6 +67,7 @@ class Purchase:
     service_code: str
     code: str | None = None
     cancelled: bool = False
+    country: str = ""       # pvacodes needs it back on every poll
 
     @property
     def digits(self) -> str:
@@ -370,6 +371,100 @@ class SecureIoBuyer(Buyer):
             pass
 
 
+class PvaCodesBuyer(Buyer):
+    """pvacodes: do=get_number / get_sms / cancel_number, status envelope."""
+
+    def buy(self, offer: Offer) -> Purchase:
+        data = self.provider.call(
+            "get_number", country=offer.country, app=offer.service_code
+        )
+        phone = _first(data, "data")
+        number_id = _first(data, "id")
+        if not phone:
+            raise ProviderError(f"{self.name}: no number in reply: {str(data)[:120]}")
+        return Purchase(
+            provider=self.name,
+            order_id=str(number_id or ""),
+            phone=str(phone),
+            price=offer.price,
+            currency="USD",
+            service_code=offer.service_code,
+            country=offer.country,
+        )
+
+    def poll(self, purchase: Purchase) -> str | None:
+        try:
+            data = self.provider.call(
+                "get_sms",
+                country=purchase.country or "USA",
+                app=purchase.service_code,
+                number=purchase.phone,
+            )
+        except ProviderError:
+            return None  # not arrived yet reads as a non-1000 status
+        code = _first(data, "data", "sms", "code")
+        return str(code) if code else None
+
+    def cancel(self, purchase: Purchase) -> None:
+        if not purchase.order_id:
+            return
+        try:
+            self.provider.call("cancel_number", number_id=purchase.order_id)
+            purchase.cancelled = True
+        except ProviderError:
+            pass  # "too early to cancel" is normal and not worth surfacing
+
+
+class VerifySmsBuyer(Buyer):
+    """verifysms: JSON body + API-KEY header, transaction_id throughout."""
+
+    def buy(self, offer: Offer) -> Purchase:
+        body: dict[str, Any] = {"code": offer.service_code}
+        if offer.operator in self.provider.CARRIERS:
+            body["carriers"] = [offer.operator]
+        data = _request_json(
+            f"{self.provider.base_url}/api/rent",
+            method="POST",
+            json_body=body,
+            headers=self.provider.headers(),
+        )
+        txn = _first(data, "transaction_id")
+        phone = _first(data, "number")
+        if not txn or not phone:
+            raise ProviderError(f"{self.name}: unexpected rent reply: {str(data)[:120]}")
+        return Purchase(
+            provider=self.name,
+            order_id=str(txn),
+            phone=str(phone),
+            price=_as_float(_first(data, "cost")) or offer.price,
+            currency="USD",
+            service_code=offer.service_code,
+        )
+
+    def poll(self, purchase: Purchase) -> str | None:
+        try:
+            body = _request(
+                f"{self.provider.base_url}/api/code",
+                params={"transaction_id": purchase.order_id},
+                headers=self.provider.headers(),
+            ).strip().strip('"')
+        except ProviderError:
+            return None  # 409 until the code lands
+        return body or None
+
+    def cancel(self, purchase: Purchase) -> None:
+        try:
+            _request(
+                f"{self.provider.base_url}/api/cancel",
+                method="POST",
+                json_body={"transaction_id": purchase.order_id},
+                headers=self.provider.headers(),
+            )
+            purchase.cancelled = True
+        except ProviderError:
+            pass
+
+
 def buyer_for(provider: Provider) -> Buyer:
     """Pick the buy/poll implementation matching a provider's protocol."""
     if isinstance(provider, FiveSim):
@@ -380,6 +475,10 @@ def buyer_for(provider: Provider) -> Buyer:
         return TextVerifiedBuyer(provider)
     if isinstance(provider, _sms.SecureIoSms):
         return SecureIoBuyer(provider)
+    if isinstance(provider, _sms.PvaCodes):
+        return PvaCodesBuyer(provider)
+    if isinstance(provider, _sms.VerifySms):
+        return VerifySmsBuyer(provider)
     if isinstance(provider, (DaisySms, SmsActivateCompat)):
         return ActivateBuyer(provider)
     raise PurchaseRefused(f"{provider.name}: no purchase support for this protocol")
@@ -534,7 +633,10 @@ def rank_offers(
 
 # Provider-wide failures: no other pool at that site will work either, so the
 # rest of its offers are skipped rather than burning attempts one by one.
-FATAL_MARKERS = ("BAD_KEY", "NO_BALANCE", "HTTP 401", "HTTP 403", "auth")
+FATAL_MARKERS = (
+    "BAD_KEY", "NO_BALANCE", "HTTP 401", "HTTP 403", "auth",
+    "insufficient balance", "invalid api key", "[1002]", "[1003]",
+)
 
 
 def _is_provider_wide(detail: str) -> bool:

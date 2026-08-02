@@ -763,10 +763,162 @@ def _iter_regions(regions: Any):
             yield str(_first(entry, "region", "country", "code") or "US"), entry
 
 
+class PvaCodes(Provider):
+    """beta.pvacodes.com — `do=` verbs, apps named rather than coded.
+
+    Every reply is wrapped in a status envelope:
+
+        {"status": {"code": "1000", "message": "..."}, "data": ..., "id": ...}
+
+    so a failure arrives as HTTP 200 with a code in the body. Treating that
+    envelope as authoritative is the whole job — otherwise "insufficient
+    balance" reads as success with no offers.
+    """
+
+    name = "pvacodes"
+    signup_url = "https://beta.pvacodes.com/"
+    env_key = "PVACODES_API_KEY"
+    DEFAULT_BASE = "https://beta.pvacodes.com"
+    API_PATH = "app/api.php"
+
+    # From the published table. 1000 is the only success.
+    STATUS_MEANINGS = {
+        "1001": "general error",
+        "1002": "invalid API key",
+        "1003": "insufficient balance",
+        "1004": "service not available",
+        "1005": "invalid parameters",
+        "2000": "out of stock",
+        "429": "rate limited",
+    }
+
+    def call(self, do: str, **params: Any) -> Any:
+        """One API call, with the status envelope unwrapped or raised."""
+        raw = _request_json(
+            f"{self.base_url}/{self.API_PATH}",
+            params={"do": do, "key": self.api_key, **params},
+        )
+        if not isinstance(raw, dict):
+            return raw
+        status = raw.get("status") or {}
+        code = str(_first(status, "code") or "1000")
+        if code != "1000":
+            meaning = self.STATUS_MEANINGS.get(code, "unknown status")
+            message = _first(status, "message") or meaning
+            raise ProviderError(f"{self.name}: [{code}] {message}")
+        return raw
+
+    def fetch(self, terms: Sequence[str], us_only: bool) -> tuple[list[Offer], list[str]]:
+        countries = ["USA"] if us_only else self._countries()
+        offers: list[Offer] = []
+        for country in countries:
+            payload = self.call("get_apps", country=country)
+            for app, info in _iter_pva_apps(payload):
+                if not _matches(app, terms):
+                    continue
+                offers.append(
+                    Offer(
+                        provider=self.name,
+                        service=str(app),
+                        service_code=str(app),  # get_number takes the app name
+                        country=country,
+                        price=_as_float(_first(info, "price", "cost", "credits")),
+                        currency="USD",
+                        count=_as_int(_first(info, "count", "stock", "available", "quantity")),
+                        success_rate=_as_float(_first(info, "success_rate", "rate")),
+                    )
+                )
+        return offers, ["rate limited to 90 calls/min on the normal tier"]
+
+    def _countries(self) -> list[str]:
+        try:
+            payload = self.call("get_countries")
+        except ProviderError:
+            return ["USA"]
+        data = _first(payload, "data") if isinstance(payload, dict) else payload
+        if isinstance(data, dict):
+            return [str(c) for c in data] or ["USA"]
+        out = []
+        for entry in data or []:
+            name = _first(entry, "country", "name", "code") if isinstance(entry, dict) else entry
+            if name:
+                out.append(str(name))
+        return out or ["USA"]
+
+
+def _iter_pva_apps(payload: Any):
+    """Yield (app_name, info) from get_apps, whichever shape it returns."""
+    data = _first(payload, "data", "apps") if isinstance(payload, dict) else payload
+    if data is None and isinstance(payload, dict):
+        data = payload
+    if isinstance(data, dict):
+        for app, info in data.items():
+            if app in ("status", "id"):
+                continue
+            yield app, (info if isinstance(info, dict) else {"price": info})
+        return
+    for entry in data or []:
+        if isinstance(entry, dict):
+            app = _first(entry, "app", "name", "service")
+            if app:
+                yield app, entry
+
+
+class VerifySms(Provider):
+    """verifysms.io — key in an API-KEY header, services keyed by short code.
+
+    /api/services returns {code: {name, cost, in_stock}}, so Walmart ("fc")
+    is found by name without hardcoding the code.
+
+    Renting takes an optional carrier from verizon / att / tmobile. Those are
+    genuinely separate pools — one can be dry while another isn't — so each
+    becomes its own candidate for the failover to cycle through.
+    """
+
+    name = "verifysms"
+    signup_url = "https://verifysms.io/"
+    env_key = "VERIFYSMS_API_KEY"
+    DEFAULT_BASE = "https://verifysms.io"
+    CARRIERS: tuple[str, ...] = ("verizon", "att", "tmobile")
+
+    def headers(self) -> dict[str, str]:
+        return {"API-KEY": self.api_key}
+
+    def fetch(self, terms: Sequence[str], us_only: bool) -> tuple[list[Offer], list[str]]:
+        data = _request_json(f"{self.base_url}/api/services", headers=self.headers())
+        offers: list[Offer] = []
+        for code, info in (data or {}).items():
+            if not isinstance(info, dict):
+                continue
+            label = str(_first(info, "name") or code)
+            if not _matches(label, terms):
+                continue
+            price = _as_float(_first(info, "cost", "price"))
+            # in_stock is a boolean here, not a count. False means empty;
+            # True means available with the quantity unstated.
+            available = info.get("in_stock")
+            count = 0 if available is False else None
+            for carrier in self.CARRIERS:
+                offers.append(
+                    Offer(
+                        provider=self.name,
+                        service=label,
+                        service_code=str(code),
+                        country="USA",
+                        operator=carrier,
+                        price=price,
+                        currency="USD",
+                        count=count,
+                    )
+                )
+        return offers, ["US only; carriers verizon/att/tmobile are separate pools"]
+
+
 PROVIDERS: dict[str, type[Provider]] = {
     cls.name: cls
     for cls in (
-        FiveSim, TextVerified, DaisySms, HeroSms, SmsPool, SmsPva, SecureIoSms
+        FiveSim, TextVerified, DaisySms, HeroSms, SmsPool, SmsPva, SecureIoSms,
+        PvaCodes, VerifySms,
     )
 }
 
@@ -782,6 +934,8 @@ PROTOCOLS: dict[str, type[Provider]] = {
     "textverified": TextVerified,
     "smspva": SmsPva,
     "secureiosms": SecureIoSms,
+    "pvacodes": PvaCodes,
+    "verifysms": VerifySms,
 }
 
 
@@ -827,20 +981,13 @@ KNOWN_ACTIVATE_HOSTS: dict[str, dict[str, str]] = {
     "smshub": {"base_url": "https://smshub.org", "env": "SMSHUB_API_KEY"},
     "sms-acktiv": {"base_url": "https://sms-acktiv.ru", "env": "SMS_ACKTIV_API_KEY"},
     "simsms": {"base_url": "https://simsms.org", "env": "SIMSMS_API_KEY"},
-    # Same protocol, different handler path.
-    "pvacodes": {
-        "base_url": "https://beta.pvacodes.com",
-        "env": "PVACODES_API_KEY",
-        "api_path": "app/api.php",
-    },
 }
 
 # Sites confirmed to exist with a real API, but whose protocol we haven't
 # identified. Listed so `--list-providers` names them and the UI can offer to
 # probe them, rather than pretending they don't exist.
-UNKNOWN_PROTOCOL_SITES: dict[str, str] = {
-    "verifysms": "https://www.verifysms.io",
-}
+# Every site in use now has an adapter. Kept for the next unidentified one.
+UNKNOWN_PROTOCOL_SITES: dict[str, str] = {}
 
 # Registry names already covered by a richer built-in adapter above (the
 # built-ins use better endpoints, e.g. DaisySMS's getPricesVerification, which

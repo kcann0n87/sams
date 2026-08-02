@@ -198,6 +198,17 @@ sms_providers:
   secureiosms:
     api_key: ""            # or export SECUREIOSMS_API_KEY
 
+  # beta.pvacodes.com — do= verbs at app/api.php. Not the activate protocol
+  # despite the .php path. Rate limited to 90 calls/min on the normal tier.
+  pvacodes:
+    api_key: ""            # or export PVACODES_API_KEY
+
+  # verifysms.io — key in an API-KEY header. Walmart is service code "fc",
+  # discovered by name. Carriers verizon/att/tmobile are separate pools and
+  # each is tried in turn when codes don't arrive.
+  verifysms:
+    api_key: ""            # or export VERIFYSMS_API_KEY
+
   # --- sites on the shared "activate" (handler_api) protocol ----------------
   # These need nothing but a key — the base URL is already registered. Set the
   # key here or export the variable shown by --list-providers:
