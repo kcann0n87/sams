@@ -788,6 +788,7 @@ class WalmartFlow:
 
         self.settle()
         self.wait_out_captcha()
+        self._answer_extra_password(account)
         self.dump("after-login")
 
         marker = (self.cfg.selectors or {}).get("logged_in_marker", "")
@@ -879,6 +880,38 @@ class WalmartFlow:
                     f"{self.cfg.manual_login_seconds}s"
                 )
             time.sleep(2)
+
+    def _answer_extra_password(self, account: WalmartAccount, timeout: float = 20.0) -> bool:
+        """Fill a password Walmart asks for on top of the emailed code.
+
+        Answering one challenge isn't always the end of it — the code can be
+        followed by a password screen, and stopping there leaves the run one
+        field short of signed in.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            if not self.signed_out():
+                return False
+            if self._visible("login_password"):
+                if not account.password:
+                    raise FlowError(
+                        "Walmart is asking for the password as well as the code, "
+                        f"and {account.email} hasn't got one in "
+                        "walmart_accounts.csv"
+                    )
+                print("    password also requested — filling it")
+                self._fill("login_password", account.password)
+                button = self._find_code_submit()
+                if button is not None:
+                    button.click()
+                elif (self.cfg.selectors or {}).get("login_submit"):
+                    self.page.click(self.cfg.selectors["login_submit"])
+                self.settle()
+                self.dump("after-extra-password")
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(1)
 
     def _await_next_screen(self, before_url: str, timeout: float = 15.0) -> bool:
         """Wait for the sign-in step after Continue to actually be on screen.

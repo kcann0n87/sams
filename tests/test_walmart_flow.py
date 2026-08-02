@@ -856,6 +856,39 @@ def test_an_existing_session_skips_sign_in_entirely():
     assert page.filled.get("#password") is None
 
 
+def test_a_password_asked_for_after_the_code_is_filled_too():
+    """Answering the code isn't always the end of sign-in.
+
+    Walmart can follow it with a password screen, and stopping there leaves
+    the run one field short of being signed in.
+    """
+    class CodeThenPassword(FakePage):
+        """Stays signed out until the password is submitted."""
+
+        flips_on_click = False
+
+        def locator(self, selector):
+            if selector == "#password":
+                # Only after the code has gone in.
+                return FakeLocator(1 if "#logincode" in self.filled else 0)
+            return super().locator(selector)
+
+        def click(self, selector):
+            super().click(selector)
+            if selector == "#signin" and "#password" in self.filled:
+                self.url = SIGNED_IN_URL
+
+    page = CodeThenPassword()
+    flow = _flow(page, login_use_code="#sendcode",
+                 login_code_input="#logincode", login_code_submit="#loginverify")
+    result = add_phone_to_account(
+        flow, ACCOUNT, lambda: (_purchase(), []), fetch_email_code=lambda: "424242"
+    )
+    assert result.ok, result.error
+    assert page.filled["#logincode"] == "424242"
+    assert page.filled["#password"] == "pw", "left the password screen unanswered"
+
+
 def test_continue_is_given_time_to_render_the_next_screen():
     """The transition after Continue fires no load event.
 
