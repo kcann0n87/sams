@@ -89,10 +89,48 @@ Their US-only filtering deserves care: this project found that matching
 country names loosely lets Australia, Austria, Belarus, Cyprus, Mauritius and
 Russia through, because each contains "us". Pick the country by id.
 
-### cyberyozh.json — read the polling note before using
+### cyberyozh.json and cyberyozh-relay.json
 
-Version 0.9.1: the buy path is pinned from their live catalogue, the poll is
-still unverified.
+Two files, because this account assigns numbers **asynchronously**: `POST
+/numbers/` comes back `status: "new"` with `phone_number: null`, and the
+number only appears seconds later on `GET /numbers/{id}/`. Inbox needs a
+populated number in the single purchase response, so:
+
+- **`cyberyozh-relay.json`** — points `getPhoneNumber` at
+  `http://127.0.0.1:8765/number`, a small local server (`relay/`) that does
+  the waiting and hands back a populated number. Everything else calls
+  CyberYozh directly. **This is the one that works.**
+- **`cyberyozh.json`** — posts straight to CyberYozh. Simpler, and fine on any
+  account where the number comes back immediately. Try it first; if the
+  purchase returns no number, switch.
+
+Both now poll `GET /numbers/{id}/` for `history_sms_code` (an array — the
+pending check is `EMPTY_ARRAY`), cancel with `PUT /numbers/{id}/cancel/`, and
+read balance from `/api/v2/users/balance/`.
+
+#### Check the country code before spending
+
+The configs use **`667`**, which is what `GET /numbers/countries/` returns for
+"United States America". A version of this schema circulated with `187` — the
+SMS-Activate convention — and on CyberYozh that is a different country
+entirely. Requesting Walmart in the wrong country returns out-of-numbers,
+which in a task runner looks like a five-minute timeout per attempt rather
+than a mistake.
+
+If OON persists, verify with:
+
+```
+curl -s -H "X-Api-Key: $CY_KEY" \
+  "https://app.cyberyozh.com/api/v1/numbers/countries/" \
+  | python3 -c "import json,sys;[print(c) for c in json.load(sys.stdin) if c['code'] in ('187','667')]"
+```
+
+#### markup_percent
+
+Set to `0`. It accepts `0, 50, 100 … 2000` and pays over the base price,
+presumably for priority on contested stock. A circulated version had it at
+**200**, which triples what you pay per number — worth raising deliberately if
+OON turns out to be contention, not worth inheriting by accident.
 
 **Use `wr` on `virtual`.** That's the pool that actually issues numbers.
 

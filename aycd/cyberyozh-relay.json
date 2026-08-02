@@ -1,7 +1,7 @@
 {
-  "name": "CyberYozh",
-  "description": "app.cyberyozh.com — X-Api-Key header. If a purchase returns no phone_number, this account assigns them asynchronously; use cyberyozh-relay.json instead.",
-  "version": "1.0.0",
+  "name": "CyberYozh (via local relay)",
+  "description": "app.cyberyozh.com — X-Api-Key header. Requires cyberyozh_purchase_relay.py running on 127.0.0.1:8765 (CyberYozh assigns phone_number asynchronously, so getPhoneNumber goes through the relay; getMessage/cancel call CyberYozh directly).",
+  "version": "1.0.1",
   "author": "sams-automation",
   "priceFormat": "USD",
   "credentials": [
@@ -12,12 +12,26 @@
       "required": true
     }
   ],
+  "generalApi": {
+    "getBalance": {
+      "method": "GET",
+      "url": "https://app.cyberyozh.com/api/v2/users/balance/",
+      "headers": {
+        "X-Api-Key": "${credentials.apiKey}",
+        "accept": "application/json"
+      },
+      "responseType": "JSON",
+      "responseMapping": {
+        "balance": "$.balance"
+      }
+    }
+  },
   "tempApi": {
     "userDataFields": [
       {
         "name": "provider",
         "label": "Provider type",
-        "description": "virtual is what actually issues Walmart numbers here. residential is non-VoIP and would be preferable, but its Walmart entries returned out-of-numbers on every attempt. Rentals are the _rent variants — not what you want for one code.",
+        "description": "virtual is what actually issues Walmart numbers here. residential is non-VoIP and would be preferable, but its Walmart entries returned out-of-numbers. Rentals are the _rent variants — not what you want for one code.",
         "required": true,
         "defaultValue": "virtual"
       },
@@ -31,7 +45,7 @@
       {
         "name": "country",
         "label": "Country code",
-        "description": "Numeric code from GET /numbers/countries/. United States America is 667.",
+        "description": "Numeric code from GET /numbers/countries/, which returns 667 for \"United States America\". If a purchase comes back out-of-numbers, check this first — 187 is the SMS-Activate convention and is a different country here.",
         "required": true,
         "defaultValue": "667"
       },
@@ -54,7 +68,7 @@
         }
       },
       {
-        "name": "Walmart — residential (listed, but returns OON)",
+        "name": "Walmart — residential (returns OON)",
         "values": {
           "provider": "residential",
           "service": "se024415f170e25",
@@ -83,7 +97,7 @@
     ],
     "getPhoneNumber": {
       "method": "POST",
-      "url": "https://app.cyberyozh.com/api/v1/numbers/",
+      "url": "http://127.0.0.1:8765/number",
       "headers": {
         "X-Api-Key": "${credentials.apiKey}",
         "accept": "application/json"
@@ -100,7 +114,7 @@
       "responseType": "JSON",
       "responseMapping": {
         "phoneNumber": "$.phone_number",
-        "orderId": "$.pk"
+        "orderId": "$.order_id"
       },
       "errorCheck": {
         "path": "$.detail",
@@ -136,20 +150,6 @@
         "accept": "application/json"
       },
       "responseType": "JSON"
-    }
-  },
-  "generalApi": {
-    "getBalance": {
-      "method": "GET",
-      "url": "https://app.cyberyozh.com/api/v2/users/balance/",
-      "headers": {
-        "X-Api-Key": "${credentials.apiKey}",
-        "accept": "application/json"
-      },
-      "responseType": "JSON",
-      "responseMapping": {
-        "balance": "$.balance"
-      }
     }
   }
 }
