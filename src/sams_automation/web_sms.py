@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 from flask import Flask, Response, jsonify, request
@@ -128,6 +129,28 @@ def _offer_key(offer: Any) -> str:
     return f"{offer.provider}/{offer.service_code}/{offer.country}/{offer.operator}"
 
 
+def build_id() -> str:
+    """Short git revision of the running code.
+
+    Shown in the page footer: the server doesn't reload on its own, so "I don't
+    see the new thing" is nearly always a stale process rather than a missing
+    feature, and this makes that visible instead of guesswork.
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(Path(__file__).resolve().parent),
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        return out.stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
 def _mask(value: str) -> str:
     """Show enough to recognise a key, never enough to use it."""
     value = (value or "").strip()
@@ -213,6 +236,8 @@ def register_sms_routes(app: Flask, config_path: str) -> None:
         return jsonify(
             providers=rows,
             ready=sum(1 for r in rows if r["has_key"] and not r["dead"]),
+            build=build_id(),
+            has_add_form=True,
         )
 
     @app.post("/api/sms/key")
@@ -412,6 +437,8 @@ SMS_HTML = """<!doctype html>
     </div>
     <div id="probeout" style="margin-top:14px"></div>
   </div>
+
+  <p class="note" style="text-align:center" id="build">&nbsp;</p>
 </main>
 <script>
 const $ = id => document.getElementById(id);
@@ -422,6 +449,8 @@ async function jget(u){ const r = await fetch(u); return r.json(); }
 async function loadProviders(){
   const d = await jget('/api/sms/providers');
   $('readycount').textContent = '(' + d.ready + ' ready)';
+  $('build').textContent = 'build ' + (d.build || '?') +
+      ' — if this card is missing features, stop the server (Ctrl-C) and run ./start.sh again';
   $('provs').innerHTML = d.providers.map(p => {
     if (p.dead) return `<tr class="muted"><td class="prov">${p.name}</td>
       <td colspan="2" class="note">${p.note}</td>
