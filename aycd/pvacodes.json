@@ -1,0 +1,87 @@
+{
+  "name": "PVACodes",
+  "description": "beta.pvacodes.com — do= verbs, every reply wrapped in a status envelope",
+  "version": "1.0.0",
+  "author": "sams-automation",
+  "priceFormat": "USD",
+  "credentials": [
+    {
+      "name": "apiKey",
+      "label": "API Key",
+      "description": "From your beta.pvacodes.com account page",
+      "required": true
+    }
+  ],
+  "generalApi": {
+    "getBalance": {
+      "method": "GET",
+      "url": "https://beta.pvacodes.com/app/api.php?do=get_balance&key=${credentials.apiKey}",
+      "responseType": "JSON",
+      "responseMapping": {
+        "balance": "$.data"
+      },
+      "errorCheck": {
+        "path": "$.status[?(@.code != '1000')]",
+        "messageField": "$.status.message"
+      }
+    }
+  },
+  "tempApi": {
+    "userDataFields": [
+      {
+        "name": "country",
+        "label": "Country",
+        "description": "As named in their catalogue, e.g. USA",
+        "required": true,
+        "defaultValue": "USA"
+      },
+      {
+        "name": "app",
+        "label": "App",
+        "description": "Service name as listed by do=get_apps, e.g. Walmart",
+        "required": true
+      }
+    ],
+    "userDataConfigs": [
+      {
+        "name": "USA Walmart",
+        "values": {
+          "country": "USA",
+          "app": "Walmart"
+        }
+      }
+    ],
+    "getPhoneNumber": {
+      "method": "GET",
+      "url": "https://beta.pvacodes.com/app/api.php?do=get_number&key=${credentials.apiKey}&country=${userData.country}&app=${userData.app}",
+      "responseType": "JSON",
+      "responseMapping": {
+        "phoneNumber": "$.data",
+        "orderId": "$.id",
+        "numberValue": "$.data"
+      },
+      "errorCheck": {
+        "path": "$.status[?(@.code != '1000')]",
+        "messageField": "$.status.message"
+      }
+    },
+    "getMessage": {
+      "method": "GET",
+      "url": "https://beta.pvacodes.com/app/api.php?do=get_sms&key=${credentials.apiKey}&country=${userData.country}&app=${userData.app}&number=${session.numberValue}",
+      "responseType": "JSON",
+      "responseMapping": {
+        "message": "$.data"
+      },
+      "pendingCheck": {
+        "type": "FIELD_ABSENT",
+        "path": "$.data"
+      },
+      "pollingIntervalSeconds": 5
+    },
+    "cancelPhoneNumber": {
+      "method": "GET",
+      "url": "https://beta.pvacodes.com/app/api.php?do=cancel_number&key=${credentials.apiKey}&number_id=${session.orderId}",
+      "responseType": "JSON"
+    }
+  }
+}

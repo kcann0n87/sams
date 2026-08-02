@@ -1,0 +1,109 @@
+{
+  "name": "SMSPool",
+  "description": "smspool.net — form-encoded POSTs, numeric service and country ids",
+  "version": "1.0.0",
+  "author": "sams-automation",
+  "priceFormat": "USD",
+  "credentials": [
+    {
+      "name": "apiKey",
+      "label": "API Key",
+      "description": "From smspool.net > Profile > API key",
+      "required": true
+    }
+  ],
+  "generalApi": {
+    "getBalance": {
+      "method": "POST",
+      "url": "https://api.smspool.net/request/balance",
+      "body": {
+        "key": "${credentials.apiKey}"
+      },
+      "contentType": "application/x-www-form-urlencoded",
+      "responseType": "JSON",
+      "responseMapping": {
+        "balance": "$.balance"
+      }
+    }
+  },
+  "tempApi": {
+    "userDataFields": [
+      {
+        "name": "country",
+        "label": "Country ID",
+        "description": "Numeric id from /country/retrieve_all. United States is 1.",
+        "required": true,
+        "defaultValue": "1"
+      },
+      {
+        "name": "service",
+        "label": "Service ID",
+        "description": "Numeric id from /service/retrieve_all. Walmart is 999, Walmart Family Mobile is 1224.",
+        "required": true
+      }
+    ],
+    "userDataConfigs": [
+      {
+        "name": "US Walmart",
+        "values": {
+          "country": "1",
+          "service": "999"
+        }
+      },
+      {
+        "name": "US Walmart Family Mobile",
+        "values": {
+          "country": "1",
+          "service": "1224"
+        }
+      }
+    ],
+    "getPhoneNumber": {
+      "method": "POST",
+      "url": "https://api.smspool.net/purchase/sms",
+      "body": {
+        "key": "${credentials.apiKey}",
+        "country": "${userData.country}",
+        "service": "${userData.service}"
+      },
+      "contentType": "application/x-www-form-urlencoded",
+      "responseType": "JSON",
+      "responseMapping": {
+        "phoneNumber": "$.number",
+        "orderId": "$.order_id"
+      },
+      "errorCheck": {
+        "path": "$.message[?(@ =~ /.*error.*/i)]",
+        "messageField": "$.message"
+      }
+    },
+    "getMessage": {
+      "method": "POST",
+      "url": "https://api.smspool.net/sms/check",
+      "body": {
+        "key": "${credentials.apiKey}",
+        "orderid": "${session.orderId}"
+      },
+      "contentType": "application/x-www-form-urlencoded",
+      "responseType": "JSON",
+      "responseMapping": {
+        "message": "$.sms"
+      },
+      "pendingCheck": {
+        "type": "FIELD_ABSENT",
+        "path": "$.sms"
+      },
+      "pollingIntervalSeconds": 5
+    },
+    "cancelPhoneNumber": {
+      "method": "POST",
+      "url": "https://api.smspool.net/sms/cancel",
+      "body": {
+        "key": "${credentials.apiKey}",
+        "orderid": "${session.orderId}"
+      },
+      "contentType": "application/x-www-form-urlencoded",
+      "responseType": "JSON"
+    }
+  }
+}

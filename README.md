@@ -163,6 +163,10 @@ restock matters more than any one-shot price comparison. Details, the full
 provider list, and how to add a site in config without writing code:
 **[docs/SMS_PROVIDERS.md](docs/SMS_PROVIDERS.md)**.
 
+Using AYCD Inbox instead? **[aycd/](aycd/)** has the same providers as Custom
+SMS schemas you can load there — including the four with bespoke APIs that
+Inbox has no native support for.
+
 ## Adding a phone number to Walmart accounts
 
 **Setting this up for the first time: [docs/WALMART_SETUP.md](docs/WALMART_SETUP.md)**
