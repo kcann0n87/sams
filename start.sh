@@ -41,6 +41,21 @@ fi
 
 export PYTHONPATH="src"
 
+# The browser flows need Playwright and a Chromium build — a large download, so
+# it's fetched on first use rather than during setup. Everything else (the SMS
+# checker, the web UI) runs without it.
+case "${1:-}" in
+    walmart-add-phone|run|test-proxy)
+        if ! "$VENV/bin/python" -c "import playwright" 2>/dev/null; then
+            echo "This command drives a browser, which needs Playwright."
+            echo "Installing it now — a few minutes, one time only..."
+            "$VENV/bin/pip" install --quiet playwright || exit 1
+            "$VENV/bin/playwright" install chromium || exit 1
+            echo "Done."
+        fi
+        ;;
+esac
+
 if [ $# -eq 0 ]; then
     exec "$VENV/bin/python" -m sams_automation serve
 fi

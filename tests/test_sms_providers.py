@@ -262,6 +262,31 @@ def test_textverified_falls_back_to_pricing_endpoint():
     assert report.ok and report.offers[0].price == 0.9
 
 
+def test_textverified_prices_each_service_once():
+    # walmart appears for both Sms and Voice; the lookup must not repeat.
+    calls = []
+
+    def fake(url, **kw):
+        calls.append(url)
+        if "/auth" in url:
+            return json.dumps(TV_AUTH)
+        if "/services" in url:
+            return json.dumps([
+                {"serviceName": "walmart", "capability": "sms"},
+                {"serviceName": "walmart", "capability": "voice"},
+                {"serviceName": "walmartmoneycard", "capability": "sms"},
+            ])
+        raise sp.ProviderError("HTTP 404: (empty body)")
+    sp._request = fake
+
+    report = sp.TextVerified({"api_key": "k", "username": "me@example.com"}).check()
+    assert report.ok and len(report.offers) == 3
+    pricing_calls = [u for u in calls if "pricing" in u]
+    assert len(pricing_calls) == 2, f"one per service, got {len(pricing_calls)}"
+    # A failed price lookup must not hide the offer — it's still buyable.
+    assert all(o.in_stock for o in report.offers)
+
+
 def test_textverified_requires_username():
     with env():
         report = sp.TextVerified({"api_key": "k"}).check()

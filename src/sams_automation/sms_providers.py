@@ -367,13 +367,19 @@ class TextVerified(Provider):
             services = services.get("data") or services.get("services") or []
 
         offers: list[Offer] = []
+        # One lookup per service, not per capability: the same service appears
+        # once for SMS and once for Voice, and a failing endpoint would
+        # otherwise repeat the same error for every one of them.
+        price_cache: dict[str, float | None] = {}
         for svc in services or []:
             name = _first(svc, "serviceName", "normalizedName", "name") or ""
             if not _matches(name, terms):
                 continue
             price = _as_float(_first(svc, "cost", "price"))
             if price is None:
-                price = self._price(name, auth, notes)
+                if name not in price_cache:
+                    price_cache[name] = self._price(name, auth, notes)
+                price = price_cache[name]
             offers.append(
                 Offer(
                     provider=self.name,
@@ -972,7 +978,9 @@ KNOWN_ACTIVATE_HOSTS: dict[str, dict[str, str]] = {
         "base_url": "https://sms-activation-service.com",
         "env": "SMS_ACTIVATION_SERVICE_API_KEY",
     },
-    "5sim-activate": {"base_url": "https://api1.5sim.net", "env": "FIVESIM_ACTIVATE_API_KEY"},
+    # api1.5sim.net sits behind Cloudflare and 403s an ordinary client; the
+    # activate-compatible handler is served from the main host.
+    "5sim-activate": {"base_url": "https://5sim.net", "env": "FIVESIM_ACTIVATE_API_KEY"},
     "tiger-sms": {"base_url": "https://api.tiger-sms.com", "env": "TIGERSMS_API_KEY"},
     "hero-sms": {"base_url": "https://hero-sms.com", "env": "HEROSMS_API_KEY"},
     "grizzly-sms": {"base_url": "https://api.grizzlysms.com", "env": "GRIZZLYSMS_API_KEY"},

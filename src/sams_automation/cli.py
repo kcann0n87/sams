@@ -447,11 +447,27 @@ def _cmd_sms_check(args: argparse.Namespace) -> int:
         return 0 if any(r.ok and any(o.in_stock for o in r.offers) for r in reports) else 1
 
     rows = _sms_render(reports, rub_per_usd, args.in_stock_only)
-    if rows:
-        rows.sort()
-        print("Cheapest in-stock options (USD equivalent):")
-        for usd, label in rows[:5]:
-            print(f"  ${usd:0.2f}  {label}")
+
+    # Availability and priceability are different questions. An offer whose
+    # price we can't read is still an offer you can buy — reporting it as an
+    # empty pool is the exact confusion the qty=0 / qty=- split exists to
+    # prevent, so the verdict comes from in_stock and never from the ranking.
+    in_stock = [o for r in reports if r.ok for o in r.offers if o.in_stock]
+    listed = sum(len(r.offers) for r in reports if r.ok)
+
+    if in_stock:
+        unpriced = len(in_stock) - len(rows)
+        print(f"In stock: {len(in_stock)} offer(s) available now.")
+        if rows:
+            rows.sort()
+            print("Cheapest (USD equivalent):")
+            for usd, label in rows[:5]:
+                print(f"  ${usd:0.2f}  {label}")
+        if unpriced:
+            print(
+                f"  ({unpriced} available offer(s) reported no usable price — "
+                "buyable, but not comparable on cost.)"
+            )
         if rub_per_usd is None and any(
             o.currency != "USD" for r in reports for o in r.offers
         ):
@@ -459,18 +475,15 @@ def _cmd_sms_check(args: argparse.Namespace) -> int:
                 "\n  (Set sms_providers.rub_per_usd in your config to include "
                 "RUB-priced offers in this ranking.)"
             )
+    elif listed:
+        print(
+            f"No Walmart stock. {listed} offer(s) are listed but the pools are "
+            "empty — try `--watch` to catch a restock."
+        )
     else:
-        listed = sum(len(r.offers) for r in reports if r.ok)
-        if listed:
-            print(
-                f"No in-stock Walmart offers. {listed} offer(s) are listed but "
-                "the pools are empty — try `--watch` to catch a restock."
-            )
-        else:
-            print("No provider lists a Walmart service right now.")
+        print("No provider lists a Walmart service right now.")
 
-    any_stock = any(r.ok and any(o.in_stock for o in r.offers) for r in reports)
-    return 0 if any_stock else 1
+    return 0 if in_stock else 1
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
