@@ -296,7 +296,7 @@ class WalmartFlow:
             pass
         element.click()
 
-    def find_code_option(self) -> Any | None:
+    def find_code_option(self, quiet: bool = False) -> Any | None:
         """The "email me a one-time code" control on a code-choice screen.
 
         Walmart builds these options from divs carrying a role rather than
@@ -321,6 +321,8 @@ class WalmartFlow:
                 continue
             candidates.append((len(text), element, text))
         if not candidates:
+            if quiet:
+                return None
             # Say what was on the screen. Guessing at markup nobody can see is
             # how this took several runs to get right the first time.
             print("    no code option matched. Clickable things on this screen:")
@@ -329,6 +331,8 @@ class WalmartFlow:
             return None
         candidates.sort(key=lambda c: c[0])
         _, element, text = candidates[0]
+        if quiet:
+            return element
         if len(candidates) > 1:
             print(f"    code option: {text[:70]!r} "
                   f"(best of {len(candidates)})")
@@ -671,11 +675,18 @@ class WalmartFlow:
         # button between them is optional rather than assumed.
         cont = (self.cfg.selectors or {}).get("login_continue", "")
         if cont:
+            before_continue = self._url()
             self.page.click(cont)
             # Continue navigates. Dumping straight away captured the page we
             # just left — email still filled, the button already disabled —
             # which is the opposite of what the dump is for.
             self.settle()
+            # settle() waits on load events, and this transition often fires
+            # neither — the next screen is rendered in place. Without this the
+            # code option is looked for on a page that hasn't changed yet, and
+            # not finding one reads as "this account has no code option".
+            if not self._await_next_screen(before_continue):
+                print("    the Continue step didn't change the page")
             self.wait_out_captcha()
             self.dump("login-after-continue")
             print(f"    after continue: {self.describe()}")
@@ -756,6 +767,15 @@ class WalmartFlow:
             # password field too, and refusing on the URL alone would block a
             # sign-in that works.
             if not self._present("login_password"):
+                if "/account/login" in self._url():
+                    # Never left the first screen, so there was no code option
+                    # to find and no password field either. Blaming the code
+                    # option here sends you looking at the wrong page.
+                    raise FlowError(
+                        "still on the email screen — Continue didn't advance. "
+                        "Check walmart.selectors.login_continue against "
+                        "screenshots/walmart-error.html"
+                    )
                 self.suggest_code_options()
                 raise FlowError(
                     "no password field on this screen — it's Walmart's code-choice "
@@ -859,6 +879,24 @@ class WalmartFlow:
                     f"{self.cfg.manual_login_seconds}s"
                 )
             time.sleep(2)
+
+    def _await_next_screen(self, before_url: str, timeout: float = 15.0) -> bool:
+        """Wait for the sign-in step after Continue to actually be on screen.
+
+        Either the URL moves, or the screen changes under the same URL — a
+        password field or a code option appearing is proof of the latter.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            if self._url() != before_url:
+                return True
+            if self._visible("login_password"):
+                return True
+            if self.find_code_option(quiet=True) is not None:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.5)
 
     def wait_signed_in(self) -> bool:
         """Poll until the browser leaves Walmart's identity host.

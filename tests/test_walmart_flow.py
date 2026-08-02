@@ -856,6 +856,38 @@ def test_an_existing_session_skips_sign_in_entirely():
     assert page.filled.get("#password") is None
 
 
+def test_continue_is_given_time_to_render_the_next_screen():
+    """The transition after Continue fires no load event.
+
+    Looking for the code option immediately finds nothing, and "no code
+    option" reads as "this account hasn't got one" rather than "the page
+    hasn't changed yet".
+    """
+    class SlowContinue(FakePage):
+        """The password field only appears on the third look."""
+
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.looks = 0
+
+        def _progress(self):
+            # Continue renders in place here; only the sign-in itself moves us.
+            if "#password" in self.filled:
+                super()._progress()
+
+        def locator(self, selector):
+            if selector == "#password":
+                self.looks += 1
+                return FakeLocator(1 if self.looks > 2 else 0)
+            return super().locator(selector)
+
+    page = SlowContinue()
+    flow = _flow(page, login_continue="#next")
+    result = add_phone_to_account(flow, ACCOUNT, lambda: (_purchase(), []))
+    assert result.ok, result.error
+    assert page.filled["#password"] == "pw", "gave up before the screen arrived"
+
+
 def test_a_visible_sign_in_form_beats_a_signed_in_looking_url():
     """The URL is not proof on its own.
 
