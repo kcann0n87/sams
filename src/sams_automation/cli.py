@@ -159,7 +159,8 @@ def _cmd_sms_probe(args: argparse.Namespace) -> int:
         return 2
 
     print(f"Probing {args.base_url} with {len(PROTOCOL_NAMES())} protocol(s) ...\n")
-    results = probe(args.base_url, key, name=name)
+    calls: list[dict] = [] if args.show_responses else None
+    results = probe(args.base_url, key, name=name, capture=calls)
     for r in results:
         mark = "MATCH" if r.sells_walmart else ("ok   " if r.ok else "no   ")
         print(f"  {mark}  {r.protocol:<14} {r.detail}")
@@ -167,6 +168,18 @@ def _cmd_sms_probe(args: argparse.Namespace) -> int:
             price = f"{offer.price:.2f} {offer.currency}" if offer.price is not None else "n/a"
             qty = offer.count if offer.count is not None else "-"
             print(f"  {'':<7} {'':<14}   {offer.service} · {offer.country} · {price} · qty={qty}")
+
+    if calls:
+        print("\nEvery request tried, and what came back:")
+        for c in calls:
+            mark = "ok " if c.get("ok") else "ERR"
+            params = f"  {c['params']}" if c.get("params") else ""
+            print(f"\n  {mark} {c['method']} {c['url']}{params}")
+            print(f"      {c.get('detail', '')}")
+        print(
+            "\nNo match but a 401/403 above means the path exists and only the auth\n"
+            "style is wrong. HTML or a 404 everywhere means the API lives elsewhere."
+        )
 
     winner = next((r for r in results if r.sells_walmart), None) or next(
         (r for r in results if r.ok), None
@@ -587,6 +600,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp_.add_argument(
         "--key", default=None, help="API key inline (ends up in shell history)."
+    )
+    sp_.add_argument(
+        "--show-responses",
+        action="store_true",
+        help="Print every request tried and its raw response — use when nothing "
+             "matches and you need to see what the API actually looks like.",
     )
     sp_.set_defaults(func=_cmd_sms_probe)
 

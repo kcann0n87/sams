@@ -17,6 +17,7 @@ the default search terms cover both.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import urllib.error
@@ -727,11 +728,48 @@ class ProbeResult:
         return bool(self.walmart)
 
 
+@contextlib.contextmanager
+def record_http(sink: list[dict[str, Any]]):
+    """Capture every HTTP call made inside the block, bodies included.
+
+    For probing an undocumented API this is the whole point: a bare "404" says
+    nothing, but seeing that one path 401s while another returns HTML tells you
+    where the real API lives and how it wants to be authenticated.
+    """
+    global _request
+    original = _request
+
+    def recorder(url: str, **kw: Any) -> str:
+        entry: dict[str, Any] = {
+            "url": url,
+            "method": kw.get("method", "GET"),
+            "params": {k: v for k, v in (kw.get("params") or {}).items() if k != "api_key"},
+        }
+        try:
+            body = original(url, **kw)
+        except ProviderError as e:
+            entry["ok"] = False
+            entry["detail"] = str(e)[:300]
+            sink.append(entry)
+            raise
+        entry["ok"] = True
+        entry["detail"] = body[:300]
+        sink.append(entry)
+        return body
+
+    _request = recorder  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        _request = original  # type: ignore[assignment]
+
+
 def probe(
     base_url: str,
     api_key: str = "",
     name: str = "probe",
     terms: Sequence[str] = DEFAULT_TERMS,
+    capture: list[dict[str, Any]] | None = None,
 ) -> list[ProbeResult]:
     """Work out which API a host speaks by trying each protocol against it.
 
@@ -747,7 +785,11 @@ def probe(
         if protocol == "handler_api":
             continue  # alias of sms-activate; probing both is just noise
         provider = cls({"name": name, "base_url": base_url, "api_key": api_key})
-        report = provider.check(terms)
+        if capture is not None:
+            with record_http(capture):
+                report = provider.check(terms)
+        else:
+            report = provider.check(terms)
         if report.ok:
             results.append(
                 ProbeResult(

@@ -215,8 +215,29 @@ It prints the exact `custom:` block to paste. Results rank protocols that found
 a Walmart service above ones that merely authenticated, so a site that answers
 on two protocols still points you at the useful one.
 
-If nothing matches, the site speaks an API that isn't one of the four — that's
-a docs-and-code job, not a config one.
+If nothing matches, add `--show-responses` to see every request tried and what
+came back. That turns the probe into a discovery tool for an undocumented API:
+
+- A **401/403** on a path means the path exists and only the auth style is
+  wrong — worth trying a different header.
+- **HTML or 404 everywhere** means the API lives at a different base URL.
+
+The capture strips `api_key` from recorded parameters, so the output is safe to
+paste to someone for diagnosis.
+
+### When a provider publishes no API docs at all
+
+Some do have an API but document nothing. Their own dashboard is a web app, so
+it uses that API in front of you:
+
+1. Open the provider's dashboard, then DevTools → **Network**, filter **Fetch/XHR**.
+2. Do the thing you want to automate — list services, buy a verification.
+3. Click the request that fires. **Headers** shows the base URL and auth style;
+   **Response** shows the JSON shape.
+4. Right-click → *Copy as cURL*, then delete the key before sharing it.
+
+That's usually a two-minute job and it produces better information than most
+published docs.
 
 ### Adding a site that isn't registered
 

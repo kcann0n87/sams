@@ -341,6 +341,48 @@ def test_probe_does_not_double_report_alias_protocol():
     assert "handler_api" not in [r.protocol for r in results]
 
 
+def test_probe_capture_never_records_the_api_key():
+    # This output is meant to be pasted to a human for diagnosis, so the key
+    # must not travel with it.
+    install({"getServicesList": DAISY_SERVICES, "getPrices": DAISY_PRICES})
+    calls: list = []
+    sp.probe("https://unknown.example", "SUPERSECRETKEY", name="unknown", capture=calls)
+    assert calls, "nothing captured"
+    blob = repr(calls)
+    assert "SUPERSECRETKEY" not in blob, "the API key leaked into the capture"
+
+
+def test_probe_capture_records_urls_and_bodies():
+    install({"getServicesList": DAISY_SERVICES, "getPrices": DAISY_PRICES})
+    calls: list = []
+    sp.probe("https://unknown.example", "k", capture=calls)
+    assert any("handler_api" in c["url"] for c in calls)
+    assert all("detail" in c and "method" in c for c in calls)
+    # Failures must be captured too — that's the diagnostic value.
+    assert any(c["ok"] for c in calls) and any(not c["ok"] for c in calls)
+
+
+def test_record_http_restores_the_original_transport():
+    before = sp._request
+    try:
+        with sp.record_http([]):
+            pass
+    finally:
+        pass
+    assert sp._request is before, "record_http leaked its wrapper"
+
+
+def test_record_http_restores_even_when_the_body_raises():
+    install({})
+    before = sp._request
+    try:
+        with sp.record_http([]):
+            raise RuntimeError("boom")
+    except RuntimeError:
+        pass
+    assert sp._request is before
+
+
 def test_probe_snippet_is_valid_yaml_for_the_custom_block():
     import yaml
 
