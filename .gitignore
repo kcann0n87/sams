@@ -4,6 +4,7 @@ accounts.csv
 proxies.txt
 sms_keys.json
 results.csv
+purchases.csv
 recorded_flow.py
 state/
 screenshots/

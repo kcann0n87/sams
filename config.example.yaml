@@ -210,3 +210,34 @@ sms_providers:
   #     protocol: "sms-activate"
   #     base_url: "https://api.some-new-site.com"
   #     api_key: ""
+
+# =============================================================================
+# Buying verification numbers (optional, OFF by default)
+#
+# `sms-check` only ever reads. This section is what lets the tool actually
+# order a number and wait for its code — i.e. spend your money.
+#
+# Both switches must be flipped: `enabled` turns the feature on, `dry_run`
+# still refuses to buy and just reports what it would have done. That's
+# deliberate — turning purchasing on and spending are two separate decisions.
+#
+# Every order is appended to purchases.csv (git-ignored) before the code is
+# polled for, so a crash can't lose a number you've already paid for.
+# =============================================================================
+
+purchasing:
+  enabled: false
+  dry_run: true            # set false only when you're ready to be charged
+
+  # Hard ceilings, checked BEFORE any order is placed. An offer whose price
+  # can't be expressed in USD (e.g. 5sim's RUB with no rub_per_usd set) is
+  # refused rather than guessed at.
+  max_price_usd: 1.00      # per number
+  max_total_usd: 5.00      # per run, across all providers
+
+  # How long to wait for the code before giving up. On timeout the number is
+  # cancelled, which refunds it on most providers.
+  code_timeout_seconds: 180
+  poll_interval_seconds: 5
+
+  log_file: "purchases.csv"
