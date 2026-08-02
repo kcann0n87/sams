@@ -131,6 +131,63 @@ class WalmartFlow:
                 counts.append(f"{label}=?")
         return f"url={url} title={title!r} " + " ".join(counts)
 
+    def _present(self, key: str) -> bool:
+        """Whether a configured selector matches anything right now."""
+        selector = (self.cfg.selectors or {}).get(key, "")
+        if not selector:
+            return False
+        try:
+            return self.page.locator(selector).count() > 0
+        except Exception:
+            return False
+
+    # Words that mark the "send me a one-time code" option apart from the other
+    # things on that screen.
+    CODE_WORDS = ("code", "passcode", "otp", "one-time", "one time")
+
+    def suggest_code_options(self) -> list[str]:
+        """Print the clickable things that look like a code option.
+
+        The alternative is dumping the page and reading it by hand, and this
+        screen's options are divs with a role rather than buttons, so they
+        don't show up in an obvious place.
+        """
+        found: list[str] = []
+        try:
+            elements = self.page.locator(
+                "button, [role=button], [data-automation-id], [data-testid], a"
+            ).all()
+        except Exception:
+            return found
+        for element in elements[:200]:
+            try:
+                text = " ".join((element.inner_text() or "").split())[:70]
+                if not text or not any(w in text.lower() for w in self.CODE_WORDS):
+                    continue
+                selector = ""
+                for attribute in ("data-automation-id", "data-testid", "id"):
+                    value = element.get_attribute(attribute)
+                    if value:
+                        selector = (
+                            f"#{value}" if attribute == "id" else f"[{attribute}='{value}']"
+                        )
+                        break
+                if not selector:
+                    label = element.get_attribute("aria-label")
+                    selector = f"[aria-label='{label}']" if label else f"text={text[:40]!r}"
+            except Exception:
+                continue
+            found.append(f"      {selector:<44} {text}")
+        if found:
+            print("\n    Options on this screen that mention a code:")
+            for line in found:
+                print(line)
+            print(
+                "\n    Set the one you want with:\n"
+                "      .venv/bin/python tools/set_selector.py login_use_code \"<selector>\"\n"
+            )
+        return found
+
     def _fill(self, key: str, value: str, *, required: bool = True) -> bool:
         selector = (self.cfg.selectors or {}).get(key, "")
         if not selector:
@@ -225,16 +282,18 @@ class WalmartFlow:
                     f"{account.email} has no password and the emailed-code path "
                     "isn't configured (set walmart.selectors.login_use_code)"
                 )
-            # Walmart can route straight to a code-choice screen with no
-            # password field at all. Filling one then times out for 30s and
-            # blames the selector, when the real answer is that this account
-            # is on the code path and login_use_code needs setting.
-            if "withotpchoice" in str(getattr(self.page, "url", "")):
+            # Walmart can route to a screen with no password field. Filling one
+            # then times out for 30s and blames the selector, when the real
+            # answer is that this account is on the code path. Ask the page
+            # rather than the URL: the code-choice screen sometimes carries a
+            # password field too, and refusing on the URL alone would block a
+            # sign-in that works.
+            if not self._present("login_password"):
+                self.suggest_code_options()
                 raise FlowError(
-                    "Walmart went to its code-choice screen, which has no password "
-                    "field. Set walmart.selectors.login_use_code to the option you "
-                    "want — run tools/inspect_page.py on "
-                    "screenshots/walmart-login-after-continue.html to find it"
+                    "no password field on this screen — it's Walmart's code-choice "
+                    "page. Set walmart.selectors.login_use_code to one of the "
+                    "options listed above"
                 )
             method = "password"
             self._fill("login_password", account.password)

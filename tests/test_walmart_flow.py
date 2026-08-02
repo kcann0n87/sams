@@ -45,11 +45,21 @@ class FakeLocator:
 class FakePage:
     """Records what the flow did, and can be told to fail at a given step."""
 
-    def __init__(self, *, present: set[str] | None = None, fail_on: str | None = None):
+    def __init__(
+        self,
+        *,
+        present: set[str] | None = None,
+        missing: set[str] | None = None,
+        fail_on: str | None = None,
+    ):
         self.filled: dict[str, str] = {}
         self.clicked: list[str] = []
         self.visited: list[str] = []
         self.present = present or set()
+        # Fields the page doesn't have. A real page that accepts a fill has
+        # the field, so the configured selectors count as present by default
+        # and this is how a test says one is absent.
+        self.missing = missing or set()
         self.fail_on = fail_on
 
     def goto(self, url: str) -> None:
@@ -66,7 +76,15 @@ class FakePage:
         self.clicked.append(selector)
 
     def locator(self, selector: str) -> FakeLocator:
-        return FakeLocator(1 if selector in self.present else 0)
+        if selector in self.missing:
+            return FakeLocator(0)
+        if selector in self.present:
+            return FakeLocator(1)
+        # Markers must be declared with present=; a configured field exists.
+        return FakeLocator(1 if selector in set(SELECTORS.values()) else 0)
+
+    def all(self):
+        return []
 
     def screenshot(self, path: str) -> None:
         pass
@@ -423,21 +441,27 @@ def test_login_page_is_dumped_before_the_first_fill():
     assert "input" in saved.read_text()
 
 
-def test_code_choice_screen_is_named_rather_than_timing_out_on_a_password():
-    """Walmart can skip the password screen entirely.
+def test_missing_password_field_is_named_rather_than_timing_out():
+    """Filling a password field that isn't there burns 30s per account.
 
-    Filling a password field that isn't there burns 30s and blames the
-    selector, when the fix is to configure the code option.
+    The check asks the page, not the URL — Walmart's code-choice screen
+    sometimes carries a password field too, and refusing on the URL alone
+    would block a sign-in that works.
     """
-    class OtpPage(FakePage):
-        url = "https://identity.walmart.com/account/signin/withotpchoice?x=1"
-
-    page = OtpPage()
+    page = FakePage(missing={"#password"})
     flow = _flow(page, login_continue="#next")
     result = add_phone_to_account(flow, ACCOUNT, _never_buys)
     assert not result.ok
-    assert "code-choice screen" in result.error, result.error
+    assert "no password field" in result.error, result.error
     assert "#password" not in page.filled
+
+
+def test_password_is_used_when_the_field_is_actually_there():
+    page = FakePage()
+    flow = _flow(page, login_continue="#next")
+    result = add_phone_to_account(flow, ACCOUNT, lambda: (_purchase(), []))
+    assert result.ok, result.error
+    assert page.filled["#password"] == "pw"
 
 
 def test_describe_reports_the_page_state():
