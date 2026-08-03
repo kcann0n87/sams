@@ -1,8 +1,13 @@
 # Real secrets & data — never commit these
 config.yaml
 accounts.csv
+walmart_accounts.csv
+walmart_results.csv
 proxies.txt
+walmart_proxies.txt
+sms_keys.json
 results.csv
+purchases.csv
 recorded_flow.py
 state/
 screenshots/
@@ -21,3 +26,4 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+walmart-profile/

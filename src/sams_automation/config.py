@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -103,6 +104,99 @@ class Account:
         return f"{self.primary_email} -> {self.secondary_email}"
 
 
+@dataclass
+class WalmartAccount:
+    """One Walmart login we're adding a phone number to."""
+
+    email: str
+    password: str
+    proxy: str = ""      # blank = use the shared rotation from proxies.txt
+    notes: str = ""
+    phone: str = ""      # filled in once a number has been added
+
+    @property
+    def label(self) -> str:
+        return self.email
+
+
+REQUIRED_WALMART_COLUMNS = ["email", "password"]
+
+
+def load_walmart_accounts(path: str | Path) -> list[WalmartAccount]:
+    """Read the Walmart account list, in whatever shape it's written.
+
+    The format is `email:password`, one per line:
+
+        you@gmail.com:hunter2
+        you@gmail.com               (password optional — code sign-in)
+
+    Everything after the FIRST colon is the password, so a password may itself
+    contain colons or commas without being split. A comma-separated line is
+    still read when it has no colon at all, so older files keep working.
+
+    Deliberately forgiving otherwise: the realistic input is a list pasted from
+    somewhere else, and rejecting it over a header row or a stray blank line is
+    friction for no benefit. The only thing required is an address — signing in
+    with the emailed one-time code, the preferred path, never uses a password.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Walmart account list not found: {path}. "
+            "Copy walmart_accounts.example.csv to it and fill it in."
+        )
+
+    accounts: list[WalmartAccount] = []
+    problems: list[str] = []
+    for lineno, raw in enumerate(path.read_text().splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        # A header line names the columns rather than holding data.
+        low = line.lower().replace(" ", "")
+        if low.startswith("email,password") or low.startswith("email:password"):
+            continue
+
+        # Colon is the separator, and only the FIRST one counts — an email
+        # never contains one, and a password often contains commas or further
+        # colons that must survive intact. Comma is a fallback for older files
+        # written before this, and only when there's no colon to go on.
+        if ":" in line:
+            fields = [f.strip() for f in line.split(":", 1)]
+        else:
+            fields = [f.strip() for f in line.split(",")]
+        email = fields[0] if fields else ""
+        password = fields[1] if len(fields) > 1 else ""
+        if not email or "@" not in email:
+            problems.append(f"line {lineno}: no email address in {line[:40]!r}")
+            continue
+        # A password is optional: signing in with the emailed one-time code
+        # doesn't need one, and that's the preferred path.
+        accounts.append(
+            WalmartAccount(
+                email=email,
+                password=password,
+                proxy=fields[2].strip() if len(fields) > 2 else "",
+                notes=fields[3].strip() if len(fields) > 3 else "",
+            )
+        )
+
+    if not accounts:
+        detail = ("\n  " + "\n  ".join(problems[:5])) if problems else ""
+        raise ValueError(
+            f"No usable accounts in {path}. Each line should be "
+            f"'email:password', or just an email when signing in with the "
+            f"emailed code.{detail}"
+        )
+    if problems:
+        print(f"  Skipped {len(problems)} bad line(s) in {path}:")
+        for problem in problems[:5]:
+            print(f"    {problem}")
+        if len(problems) > 5:
+            print(f"    ... and {len(problems) - 5} more")
+    return accounts
+
+
 REQUIRED_ACCOUNT_COLUMNS = [
     "primary_email",
     "primary_password",
@@ -110,6 +204,92 @@ REQUIRED_ACCOUNT_COLUMNS = [
     "secondary_last",
     "secondary_email",
 ]
+
+
+# Keys entered through the web UI land here rather than in config.yaml: it's a
+# machine-written file, so no comments or formatting to preserve, and one file
+# to keep out of git. Git-ignored, same as every other secret.
+SMS_KEYS_FILE = "sms_keys.json"
+
+
+def load_sms_settings(
+    path: str | Path, keys_path: str | Path = SMS_KEYS_FILE
+) -> dict[str, Any]:
+    """Read the `sms_providers:` section, merged with web-UI-saved keys.
+
+    Deliberately not part of `load_config`: checking number availability needs
+    no IMAP or browser setup, and 5sim's price feed needs no account at all, so
+    `sms-check` stays useful before the rest of the config exists.
+
+    Precedence is keys file > config.yaml > environment, i.e. most-explicit
+    wins — a key typed into the UI overrides a stale exported one.
+    """
+    settings: dict[str, Any] = {}
+    path = Path(path)
+    if path.exists():
+        raw: dict[str, Any] = yaml.safe_load(path.read_text()) or {}
+        settings = raw.get("sms_providers") or {}
+
+    for name, entry in _load_sms_keys(keys_path).items():
+        merged = dict(settings.get(name) or {})
+        # Only non-empty values override; clearing a field in the UI writes ""
+        # and should fall back to config/env rather than blanking them.
+        merged.update({k: v for k, v in entry.items() if v not in (None, "")})
+        settings[name] = merged
+    return settings
+
+
+def _load_sms_keys(keys_path: str | Path) -> dict[str, dict[str, Any]]:
+    keys_path = Path(keys_path)
+    if not keys_path.exists():
+        return {}
+    try:
+        data = json.loads(keys_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(v, dict)}
+
+
+def save_sms_key(
+    provider: str,
+    api_key: str | None = None,
+    username: str | None = None,
+    *,
+    enabled: bool | None = None,
+    protocol: str | None = None,
+    base_url: str | None = None,
+    keys_path: str | Path = SMS_KEYS_FILE,
+) -> None:
+    """Write one provider's credentials to the keys file, creating it if needed.
+
+    Only the fields passed are touched, so saving a username doesn't wipe a key.
+
+    `protocol` and `base_url` are what let the web UI add a provider the code
+    has never heard of: an entry carrying both is built as a custom adapter, so
+    a site discovered by probing survives a restart without editing YAML.
+    """
+    keys_path = Path(keys_path)
+    data = _load_sms_keys(keys_path)
+    entry = dict(data.get(provider) or {})
+    if api_key is not None:
+        entry["api_key"] = api_key.strip()
+    if username is not None:
+        entry["username"] = username.strip()
+    if enabled is not None:
+        entry["enabled"] = bool(enabled)
+    if protocol is not None:
+        entry["protocol"] = protocol.strip()
+    if base_url is not None:
+        entry["base_url"] = base_url.strip().rstrip("/")
+    data[provider] = entry
+    keys_path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    # Secrets: keep it readable only by the owner, best-effort (no-op on Windows).
+    try:
+        keys_path.chmod(0o600)
+    except OSError:
+        pass
 
 
 def load_config(path: str | Path) -> Config:

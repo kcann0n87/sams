@@ -12,6 +12,7 @@ Start it with:  python -m sams_automation serve
 from __future__ import annotations
 
 import collections
+import logging
 import subprocess
 import sys
 import threading
@@ -21,6 +22,8 @@ from pathlib import Path
 from flask import Flask, Response, jsonify, request, send_from_directory
 
 from .config import load_accounts, load_config
+from .web_sms import register_sms_routes
+from .web_walmart import register_walmart_routes
 
 
 class Job:
@@ -115,6 +118,7 @@ INDEX_HTML = """<!doctype html>
 <header>
   <h1>Sam's Club — Complimentary Membership Automation</h1>
   <div class="sub" id="cfgsub">loading…</div>
+  <div class="sub"><a href="/sms" style="color:#fff">SMS providers &amp; Walmart stock &rarr;</a></div>
 </header>
 <main>
   <div class="card">
@@ -152,6 +156,13 @@ INDEX_HTML = """<!doctype html>
       When Chrome opens and shows a “press &amp; hold” box, solve it in that window — the run waits for you.</p>
   </div>
 
+  <div class="card" style="border-left:4px solid #0071dc">
+    <h2 style="margin-bottom:6px">Walmart — add phone numbers</h2>
+    <p class="note" style="margin:0 0 12px">A separate flow with its own page:
+      buys a verification number and adds it to your Walmart accounts.</p>
+    <a href="/walmart"><button class="primary">Open Walmart runs &rarr;</button></a>
+  </div>
+
   <div class="card">
     <h2>Live progress</h2>
     <div id="log"></div>
@@ -168,6 +179,8 @@ INDEX_HTML = """<!doctype html>
     <h2>Screenshots <span class="note" id="shotcount"></span></h2>
     <div class="shots" id="shots"></div>
   </div>
+
+  <p class="note" style="text-align:center" id="build">&nbsp;</p>
 </main>
 <script>
 async function post(url){ await fetch(url,{method:'POST'}); tick(); }
@@ -189,13 +202,36 @@ async function savePw(){
   document.getElementById('pwmsg').textContent = j.ok ? 'Saved ✓' : ('Error: '+(j.error||'failed'));
   if(j.ok){ document.getElementById('pw').value=''; loadInfo(); }
 }
+async function loadWalmart(){
+  const w = await jget('/api/walmart/info');
+  document.getElementById('build').textContent = 'build ' + (w.build || '?');
+  const missing = [];
+  if (!w.accounts) missing.push('accounts (walmart_accounts.csv)');
+  if (!w.imap_ready) missing.push('Gmail app password (walmart.imap)');
+  if (!w.use_code) missing.push('login_use_code selector — will use the password instead');
+  const bits = [
+    `${w.accounts} account(s)`,
+    w.proxies ? `${w.proxies} proxies` : 'no proxies',
+    w.dry_run ? 'DRY RUN — nothing will be bought'
+              : (w.purchasing_enabled ? '⚠ LIVE — real money' : 'purchasing off'),
+  ];
+  document.getElementById('wmstatus').innerHTML =
+    bits.join(' · ') + (w.accounts_error ? ` — <span style="color:#b3261e">${w.accounts_error}</span>` : '');
+  document.getElementById('wmhint').textContent = missing.length
+    ? 'Still to set up: ' + missing.join('; ')
+    : 'Ready. Output and screenshots appear below.';
+  for (const b of ['b-wm1','b-wmall'])
+    document.getElementById(b).disabled = !w.accounts;
+}
+
 let lastLen = 0;
 async function tick(){
   const s = await jget('/api/status');
   const pill = document.getElementById('statuspill');
   pill.textContent = s.running ? ('running: '+s.kind) : 'idle';
   pill.className = 'pill ' + (s.running ? 'run':'idle');
-  for (const b of ['b-imap','b-run1','b-runall']) document.getElementById(b).disabled = s.running;
+  for (const b of ['b-imap','b-run1','b-runall'])
+    document.getElementById(b).disabled = s.running;
   document.getElementById('b-stop').disabled = !s.running;
   const log = document.getElementById('log');
   log.textContent = s.lines.join('\\n');
@@ -212,7 +248,9 @@ async function tick(){
      '<div style="margin:4px 0"><a href="/screenshots/'+encodeURIComponent(n)+'" download>'+n+'</a></div>').join('');
 }
 loadInfo();
+loadWalmart();
 tick();
+setInterval(loadWalmart, 5000);
 setInterval(tick, 1500);
 </script>
 </body>
@@ -220,10 +258,32 @@ setInterval(tick, 1500);
 """
 
 
+class _QuietPolling(logging.Filter):
+    """Drop the successful status-poll lines from the request log.
+
+    Both pages poll a status endpoint every second or two, which floods the
+    terminal you're supposed to be watching and buries anything that matters.
+    Errors and every other request still get logged.
+    """
+
+    NOISY = ("GET /api/status", "GET /api/sms/status", "GET /favicon.ico")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        line = record.getMessage()
+        return not (any(p in line for p in self.NOISY) and (" 200 " in line or " 404 " in line))
+
+
 def create_app(config_path: str, accounts_path: str) -> Flask:
     app = Flask(__name__)
     job = Job()
     root = Path.cwd()
+    register_sms_routes(app, config_path)
+    logging.getLogger("werkzeug").addFilter(_QuietPolling())
+
+    @app.get("/favicon.ico")
+    def favicon() -> Response:
+        # Empty 204 rather than a 404 on every page load.
+        return Response(status=204)
 
     def _cfg():
         return load_config(config_path)
@@ -293,10 +353,68 @@ def create_app(config_path: str, accounts_path: str) -> Flask:
         ok = job.start("run", _py_cli(*args), root)
         return jsonify(started=ok)
 
+    @app.post("/api/walmart/run")
+    def api_walmart_run():
+        """Run the add-phone flow, streaming into the same log panel."""
+        args = ["walmart-add-phone"]
+        limit = request.args.get("limit")
+        if limit:
+            args += ["--limit", str(int(limit))]
+        if request.args.get("no_resume") == "1":
+            args.append("--no-resume")
+        ok = job.start("walmart-add-phone", _py_cli(*args), root)
+        return jsonify(started=ok)
+
+    @app.get("/api/walmart/info")
+    def api_walmart_info():
+        """How much is set up, so the page can say what's missing."""
+        import yaml
+
+        from .config import load_walmart_accounts
+
+        try:
+            accounts = load_walmart_accounts("walmart_accounts.csv")
+            n_accounts, accounts_error = len(accounts), ""
+        except Exception as e:
+            n_accounts, accounts_error = 0, str(e)
+
+        raw = {}
+        try:
+            raw = yaml.safe_load(Path(config_path).read_text()) or {}
+        except Exception:
+            pass
+        walmart = raw.get("walmart") or {}
+        purchasing = raw.get("purchasing") or {}
+        imap_user = ((walmart.get("imap") or {}).get("username") or "")
+        proxy_file = (walmart.get("proxies") or {}).get("file") or "walmart_proxies.txt"
+        try:
+            n_proxies = sum(
+                1 for line in Path(proxy_file).read_text().splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            )
+        except OSError:
+            n_proxies = 0
+
+        from .web_sms import build_id
+
+        return jsonify(
+            build=build_id(),
+            accounts=n_accounts,
+            accounts_error=accounts_error,
+            imap_user=imap_user,
+            imap_ready=bool(imap_user) and "you@gmail.com" not in imap_user,
+            proxies=n_proxies,
+            dry_run=bool(purchasing.get("dry_run", True)),
+            purchasing_enabled=bool(purchasing.get("enabled", False)),
+            use_code=bool((walmart.get("selectors") or {}).get("login_use_code")),
+        )
+
     @app.post("/api/stop")
     def api_stop():
         job.stop()
         return jsonify(stopped=True)
+
+    register_walmart_routes(app, config_path, job, _py_cli, root)
 
     @app.post("/api/set-password")
     def api_set_password():
@@ -341,8 +459,9 @@ def serve(config_path: str, accounts_path: str, port: int = 8765,
     app = create_app(config_path, accounts_path)
     port = _free_port(port)  # skip past a leftover instance instead of crashing
     url = f"http://127.0.0.1:{port}/"
-    print(f"\n  Sam's Club automation is running at:  {url}")
-    print("  Leave this window open. Close it (Ctrl-C) to stop.\n")
+    print(f"\n  Sam's Club automation:      {url}")
+    print(f"  SMS providers / Walmart:   {url}sms")
+    print("\n  Leave this window open. Close it (Ctrl-C) to stop.\n")
     if open_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     app.run(host="127.0.0.1", port=port, debug=False)

@@ -1,0 +1,78 @@
+{
+  "name": "SimSMS",
+  "description": "simsms.org \u2014 handler_api.php protocol, plain-text responses",
+  "version": "1.0.0",
+  "author": "sams-automation",
+  "priceFormat": "USD",
+  "credentials": [
+    {
+      "name": "apiKey",
+      "label": "API Key",
+      "description": "simsms.org > personal account > API key",
+      "required": true
+    }
+  ],
+  "generalApi": {
+    "getBalance": {
+      "method": "GET",
+      "url": "https://simsms.org/stubs/handler_api.php?api_key=${credentials.apiKey}&action=getBalance",
+      "responseType": "TEXT",
+      "responseMapping": {
+        "balance": "^ACCESS_BALANCE:"
+      }
+    }
+  },
+  "tempApi": {
+    "userDataFields": [
+      {
+        "name": "service",
+        "label": "Service Code",
+        "description": "SimSMS's own short code for the service. Get the list by opening https://simsms.org/stubs/handler_api.php?api_key=YOUR_KEY&action=getServicesList in a browser and searching it for the service name. Codes are per-site \u2014 one from another provider will buy the wrong service.",
+        "required": true
+      },
+      {
+        "name": "country",
+        "label": "Country ID",
+        "description": "Numeric country id. 187 is the United States across this family.",
+        "required": true,
+        "defaultValue": "187"
+      }
+    ],
+    "userDataConfigs": [
+      {
+        "name": "US \u2014 set the service code",
+        "values": {
+          "country": "187",
+          "service": ""
+        }
+      }
+    ],
+    "getPhoneNumber": {
+      "method": "GET",
+      "url": "https://simsms.org/stubs/handler_api.php?api_key=${credentials.apiKey}&action=getNumber&service=${userData.service}&country=${userData.country}",
+      "responseType": "TEXT",
+      "responseMapping": {
+        "phoneNumber": "^ACCESS_NUMBER:\\d+:",
+        "orderId": "^ACCESS_NUMBER:|:\\d+$"
+      }
+    },
+    "getMessage": {
+      "method": "GET",
+      "url": "https://simsms.org/stubs/handler_api.php?api_key=${credentials.apiKey}&action=getStatus&id=${session.orderId}",
+      "responseType": "TEXT",
+      "responseMapping": {
+        "message": "^STATUS_OK:"
+      },
+      "pendingCheck": {
+        "type": "BODY_CONTAINS",
+        "value": "STATUS_WAIT"
+      },
+      "pollingIntervalSeconds": 5
+    },
+    "cancelPhoneNumber": {
+      "method": "GET",
+      "url": "https://simsms.org/stubs/handler_api.php?api_key=${credentials.apiKey}&action=setStatus&id=${session.orderId}&status=8",
+      "responseType": "TEXT"
+    }
+  }
+}

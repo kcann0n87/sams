@@ -146,3 +146,283 @@ sams:
   # you to solve it, then resumes. Empty to disable. (TODO: confirm on first run)
   captcha_marker: "#px-captcha"
   captcha_wait_seconds: 300
+
+# =============================================================================
+# SMS verification providers (optional)
+#
+# Used only by `python -m sams_automation sms-check`, which asks each provider
+# whether it currently has numbers that can receive a Walmart / Sam's Club code
+# and what they cost. Nothing here affects the main automation run.
+#
+# You usually don't need this block at all: every provider below also reads its
+# key from an environment variable, so an existing shell setup just works.
+#   python -m sams_automation sms-check --list-providers
+# shows what was found and which variable each site looks for.
+#
+# 5sim needs no account whatsoever for its price feed.
+# =============================================================================
+
+sms_providers:
+  # Only used to rank RUB-priced offers (5sim) against USD ones. Leave unset
+  # and those offers are still listed, just excluded from the "cheapest" list.
+  # rub_per_usd: 90.0
+
+  # --- providers with a dedicated adapter -----------------------------------
+  5sim:
+    enabled: true          # public price feed; no key required
+
+  textverified:
+    api_key: ""            # or export TEXTVERIFIED_API_KEY
+    username: ""           # the email you log in with; or TEXTVERIFIED_USERNAME
+
+  daisysms:
+    api_key: ""            # or export DAISYSMS_API_KEY
+
+  herosms:
+    api_key: ""            # or export HEROSMS_API_KEY
+
+  smspool:
+    api_key: ""            # or export SMSPOOL_API_KEY
+
+  # smspva.com speaks its own API (priemnik.php), not the activate protocol.
+  # Its services are opaque "optNN" codes rather than names, so unlike every
+  # other provider the Walmart service can't be discovered by name — look it up
+  # once on smspva.com's service list and set it here. A missing code is
+  # reported as configuration, not as an empty pool.
+  smspva:
+    api_key: ""            # or export SMSPVA_API_KEY
+    service_code: ""       # e.g. "opt99" — required; nothing safe to default to
+
+  # secureiosms.com — key as a query param, services named rather than coded,
+  # so Walmart is discovered by name like everywhere else.
+  secureiosms:
+    api_key: ""            # or export SECUREIOSMS_API_KEY
+
+  # beta.pvacodes.com — do= verbs at app/api.php. Not the activate protocol
+  # despite the .php path. Rate limited to 90 calls/min on the normal tier.
+  pvacodes:
+    api_key: ""            # or export PVACODES_API_KEY
+
+  # verifysms.io — key in an API-KEY header. Walmart is service code "fc",
+  # discovered by name. Carriers verizon/att/tmobile are separate pools and
+  # each is tried in turn when codes don't arrive.
+  verifysms:
+    api_key: ""            # or export VERIFYSMS_API_KEY
+
+  # --- sites on the shared "activate" (handler_api) protocol ----------------
+  # These need nothing but a key — the base URL is already registered. Set the
+  # key here or export the variable shown by --list-providers:
+  #
+  #   smsbower ($SMSBOWER_API_KEY)        tiger-sms ($TIGERSMS_API_KEY)
+  #   grizzly-sms ($GRIZZLYSMS_API_KEY)   sms-man ($SMSMAN_API_KEY)
+  #   smshub ($SMSHUB_API_KEY)            sms-acktiv ($SMS_ACKTIV_API_KEY)
+  #   simsms ($SIMSMS_API_KEY)            5sim-activate ($FIVESIM_ACTIVATE_API_KEY)
+  #   sms-activation ($SMS_ACTIVATION_SERVICE_API_KEY)
+  #
+  # NOTE: sms-activate itself shut down 2025-12-29; use hero-sms instead.
+  #
+  # smsbower:
+  #   api_key: ""
+  #   base_url: ""         # only if the site has moved domains
+
+  # --- anything else --------------------------------------------------------
+  # Most resellers clone one of four APIs, so a new site needs no code — just
+  # name its protocol. Known protocols: sms-activate (aka handler_api), 5sim,
+  # smspool, textverified.
+  #
+  # custom:
+  #   - name: "some-new-site"
+  #     protocol: "sms-activate"
+  #     base_url: "https://api.some-new-site.com"
+  #     api_key: ""
+
+# =============================================================================
+# Buying verification numbers (optional, OFF by default)
+#
+# `sms-check` only ever reads. This section is what lets the tool actually
+# order a number and wait for its code — i.e. spend your money.
+#
+# Both switches must be flipped: `enabled` turns the feature on, `dry_run`
+# still refuses to buy and just reports what it would have done. That's
+# deliberate — turning purchasing on and spending are two separate decisions.
+#
+# Every order is appended to purchases.csv (git-ignored) before the code is
+# polled for, so a crash can't lose a number you've already paid for.
+# =============================================================================
+
+purchasing:
+  enabled: false
+  dry_run: true            # set false only when you're ready to be charged
+
+  # Hard ceilings, checked BEFORE any order is placed. An offer whose price
+  # can't be expressed in USD (e.g. 5sim's RUB with no rub_per_usd set) is
+  # refused rather than guessed at.
+  max_price_usd: 1.00      # per number
+  max_total_usd: 5.00      # per run, across all providers
+
+  # How long to wait for the code before giving up. On timeout the number is
+  # cancelled, which refunds it on most providers.
+  code_timeout_seconds: 180
+  poll_interval_seconds: 5
+
+  # Stock is not delivery: a provider can report numbers available and still
+  # never send the SMS. On a timeout that number is cancelled (refunded on
+  # most providers) and the next-cheapest provider is tried. This is how many
+  # providers get tried before giving up on the run.
+  # 0 means no cap: work through every pool in the rotation. The spend limits
+  # above are what actually stop a runaway, so while you're finding out which
+  # pools deliver, 0 is the useful setting.
+  max_attempts: 4
+
+  # Some APIs report stock without a price — TextVerified's Walmart pools do.
+  # Left false those pools are skipped entirely, because a cost that isn't
+  # known can't be checked against max_price_usd beforehand. Set true and they
+  # join the rotation last, charged against the budget at max_price_usd, so
+  # the ceiling holds by assuming the worst case instead of by skipping them.
+  allow_unpriced: false
+
+  log_file: "purchases.csv"
+
+# =============================================================================
+# Walmart — adding a verification number to an account
+#
+# Used by `python -m sams_automation walmart-add-phone`. Accounts come from
+# walmart_accounts.csv (git-ignored; copy walmart_accounts.example.csv).
+#
+# Every selector below is a PLACEHOLDER until the first run against the real
+# page. Each step is screenshotted to screenshots/walmart-*.png, and when a
+# field can't be found the error names the selector key to fix — so tuning the
+# page map is a config edit, never a code change.
+# =============================================================================
+
+walmart:
+  login_url: "https://www.walmart.com/account/login"
+  phone_url: "https://www.walmart.com/account/profile"
+
+  # Which browser to drive. Separate from the shared browser.channel above,
+  # because the Sam's Club flow needs real Chrome for its press-and-hold check
+  # and this flow may not.
+  #
+  #   "chromium"  -> Playwright's own build (already downloaded, no Chrome
+  #                  needed). This is the default.
+  #   "chrome"    -> the Google Chrome installed on this machine.
+  #
+  # Either way the profile comes from user_data_dir below, so neither one
+  # touches your everyday browsing profile. Walmart uses PerimeterX, the same
+  # vendor as Sam's Club; both binaries get challenged and the run pauses for
+  # you to solve it. Leaving this line out means chromium — it does not inherit
+  # browser.channel, which exists for the Sam's Club flow.
+  channel: "chromium"
+
+  # A persistent browser profile, kept between runs. Walmart uses PerimeterX,
+  # and a fresh profile with no history gets challenged on nearly every visit.
+  # Solving one press-and-hold in a profile that persists usually means far
+  # fewer afterward — the same trick the Sam's Club flow uses.
+  #
+  # This does NOT bypass anything: the challenge still appears and still has to
+  # be solved by you. It just stops you solving a new one every single time.
+  #
+  # One profile holds one signed-in identity, so it suits `--limit 1` runs.
+  # Leave it empty for multi-account batches.
+  user_data_dir: ""        # e.g. "walmart-profile"
+
+  # --- Mailbox for the SIGN-IN code ------------------------------------------
+  # At sign-in Walmart offers a password or an emailed one-time code. The flow
+  # always takes the code, so it needs to read the catch-all this points at.
+  # This is separate from the `imap:` block above, which is iCloud for Sam's
+  # Club — this one is the Gmail catch-all your Walmart accounts use.
+  #
+  # Gmail requires an APP PASSWORD (myaccount.google.com > Security > 2-Step
+  # Verification > App passwords). Your normal password will NOT work over
+  # IMAP, and IMAP must be enabled in Gmail settings.
+  imap:
+    host: "imap.gmail.com"
+    port: 993
+    ssl: true
+    username: "you@gmail.com"          # the catch-all account itself
+    password: "xxxx xxxx xxxx xxxx"    # 16-char app password
+    mailbox: "INBOX"
+    from_contains:
+      - "walmart"
+    timeout_seconds: 180               # how long to wait for the code email
+    poll_interval_seconds: 5
+    # Walmart's sign-in code is 6 digits. The first capture group is used.
+    code_regex: '\b(\d{6})\b'
+
+  # Walmart gets its own proxy list, separate from the Sam's Club one — these
+  # are residential IPs for a different site. Built for a large list: paste
+  # 5,000 lines in, duplicates are dropped and unparseable lines are skipped
+  # with a count rather than stopping the run.
+  proxies:
+    enabled: true
+    file: "walmart_proxies.txt"     # copy walmart_proxies.example.txt
+    # fresh       -> a shuffled IP per account, never reused until the pool
+    #                wraps around. Best with a big list, and the default.
+    # sticky      -> same account always gets the same IP (deterministic)
+    # round_robin -> straight through the list in order
+    # random      -> any IP, repeats possible
+    rotation: "fresh"
+
+  selectors:
+    # --- Sign-in. Walmart often asks for the email first and the password on a
+    # second screen; leave login_continue empty if it's a single form.
+    login_email: "input[type='email']"
+    login_continue: ""
+    # The "email me a code" option on the sign-in screen. When this finds
+    # something the flow ALWAYS takes the emailed code rather than typing a
+    # password.
+    #
+    #   "auto"       -> find it by its visible text. Walmart builds these
+    #                   options from divs whose ids are React-generated and
+    #                   change every load, so there is no stable selector to
+    #                   write down; the wording is the only durable handle.
+    #                   Only an option naming BOTH a code and email is taken —
+    #                   the SMS one would send the code to a phone nobody is
+    #                   watching.
+    #   "<selector>" -> use exactly this, for when the search picks wrong.
+    #   ""           -> don't look; type the password.
+    login_use_code: "auto"
+    # Where the emailed code gets typed. "auto" tries a list of shapes
+    # best-first, because these ids are React-generated too, and handles the
+    # segmented layout (six one-character boxes) as well as a single field.
+    login_code_input: "auto"
+    login_code_submit: "auto"
+    # Only used if login_use_code is empty.
+    login_password: "input[type='password']"
+    login_submit: "button[type='submit']"
+    # Something that exists only once signed in. Empty = skip the check, which
+    # makes a wrong password look like a page-map problem instead.
+    logged_in_marker: ""
+
+    # --- Getting to the phone form
+    add_phone_button: ""          # empty if phone_url lands on the form itself
+    phone_input: "input[type='tel']"
+    phone_submit: "button[type='submit']"
+
+    # --- Entering the code the provider received
+    code_input: "input[autocomplete='one-time-code']"
+    code_submit: "button[type='submit']"
+
+    # Shown once the number is confirmed. Empty = don't hard-fail yet.
+    success_marker: ""
+
+  # Walmart uses PerimeterX like Sam's Club does. When it appears the run pauses
+  # for you to solve it by hand; it never attempts to solve it itself.
+  captcha_marker: "#px-captcha"
+  captcha_wait_seconds: 300
+
+  # Submitting the sign-in code starts an async check and a redirect chain.
+  # Reading the URL straight afterwards calls it a failure while it's still in
+  # flight, so this is how long to keep looking before giving up.
+  signin_wait_seconds: 45
+
+  # Sign in by hand instead of driving it, then let the run carry on from the
+  # phone form. For working on the steps after sign-in without fighting the
+  # sign-in itself. The run waits for you to get through.
+  manual_login: false
+  manual_login_seconds: 300
+
+  # Leave a failed account's browser window open this long before closing it.
+  # The screenshots and HTML dumps survive either way, but the live page is
+  # usually the quicker answer. 0 closes immediately.
+  hold_open_on_error_seconds: 60

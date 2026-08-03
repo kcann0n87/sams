@@ -1,0 +1,22 @@
+# Residential proxies for the Walmart flow — one per line.
+#
+# Copy this to walmart_proxies.txt (git-ignored) and paste your list below.
+# A 5,000-line file is fine: duplicates are dropped and unparseable lines are
+# skipped with a count, so one typo never stops a run.
+#
+# Any of these forms work, with or without a scheme:
+#
+#   host:port
+#   host:port:username:password
+#   username:password@host:port
+#   http://username:password@host:port
+#   socks5://host:port
+#
+# No scheme means http. Lines starting with # are ignored, so the samples
+# below are inert — they're fake addresses and would fail if enabled.
+#
+#   1.2.3.4:8080
+#   5.6.7.8:8080:myuser:mypass
+#   myuser:mypass@9.10.11.12:3128
+#
+# Paste your real proxies below this line:

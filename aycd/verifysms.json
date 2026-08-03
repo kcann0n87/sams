@@ -1,0 +1,113 @@
+{
+  "name": "VerifySMS",
+  "description": "verifysms.io — API-KEY header, JSON bodies, per-carrier US pools",
+  "version": "1.0.0",
+  "author": "sams-automation",
+  "priceFormat": "USD",
+  "credentials": [
+    {
+      "name": "apiKey",
+      "label": "API Key",
+      "description": "From your verifysms.io dashboard",
+      "required": true
+    }
+  ],
+  "generalApi": {
+    "getBalance": {
+      "method": "GET",
+      "url": "https://verifysms.io/api/balance",
+      "headers": {
+        "API-KEY": "${credentials.apiKey}"
+      },
+      "responseType": "JSON",
+      "responseMapping": {
+        "balance": "$.balance"
+      }
+    }
+  },
+  "tempApi": {
+    "userDataFields": [
+      {
+        "name": "service",
+        "label": "Service Code",
+        "description": "Short code from /api/services. Walmart is 'fc'.",
+        "required": true
+      },
+      {
+        "name": "carrier",
+        "label": "Carrier",
+        "description": "verizon, att or tmobile. Separate pools — one can be dry while another isn't.",
+        "required": false,
+        "defaultValue": "verizon"
+      }
+    ],
+    "userDataConfigs": [
+      {
+        "name": "Walmart (Verizon)",
+        "values": {
+          "service": "fc",
+          "carrier": "verizon"
+        }
+      },
+      {
+        "name": "Walmart (AT&T)",
+        "values": {
+          "service": "fc",
+          "carrier": "att"
+        }
+      },
+      {
+        "name": "Walmart (T-Mobile)",
+        "values": {
+          "service": "fc",
+          "carrier": "tmobile"
+        }
+      }
+    ],
+    "getPhoneNumber": {
+      "method": "POST",
+      "url": "https://verifysms.io/api/rent",
+      "headers": {
+        "API-KEY": "${credentials.apiKey}"
+      },
+      "body": {
+        "code": "${userData.service}",
+        "carriers": ["${userData.carrier}"]
+      },
+      "contentType": "application/json",
+      "responseType": "JSON",
+      "responseMapping": {
+        "phoneNumber": "$.number",
+        "orderId": "$.transaction_id"
+      }
+    },
+    "getMessage": {
+      "method": "GET",
+      "url": "https://verifysms.io/api/code?transaction_id=${session.orderId}",
+      "headers": {
+        "API-KEY": "${credentials.apiKey}"
+      },
+      "responseType": "TEXT",
+      "responseMapping": {
+        "message": "^\"|\"$"
+      },
+      "pendingCheck": {
+        "type": "STATUS_CODE",
+        "value": "409"
+      },
+      "pollingIntervalSeconds": 5
+    },
+    "cancelPhoneNumber": {
+      "method": "POST",
+      "url": "https://verifysms.io/api/cancel",
+      "headers": {
+        "API-KEY": "${credentials.apiKey}"
+      },
+      "body": {
+        "transaction_id": "${session.orderId}"
+      },
+      "contentType": "application/json",
+      "responseType": "JSON"
+    }
+  }
+}

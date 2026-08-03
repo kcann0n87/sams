@@ -1,0 +1,79 @@
+{
+  "name": "SecureIO SMS",
+  "description": "secureiosms.com — API key on the query string, services named rather than coded",
+  "version": "1.0.0",
+  "author": "sams-automation",
+  "priceFormat": "Credits",
+  "credentials": [
+    {
+      "name": "apiKey",
+      "label": "API Key",
+      "description": "From your secureiosms.com dashboard",
+      "required": true
+    }
+  ],
+  "generalApi": {
+    "getBalance": {
+      "method": "GET",
+      "url": "https://api.secureiosms.com/balance?api_key=${credentials.apiKey}",
+      "responseType": "JSON",
+      "responseMapping": {
+        "balance": "$.balance"
+      }
+    }
+  },
+  "tempApi": {
+    "userDataFields": [
+      {
+        "name": "service",
+        "label": "Service",
+        "description": "Service name as listed by /services_regions, e.g. Walmart",
+        "required": true
+      }
+    ],
+    "userDataConfigs": [
+      {
+        "name": "Walmart",
+        "values": {
+          "service": "Walmart"
+        }
+      }
+    ],
+    "getPhoneNumber": {
+      "method": "GET",
+      "url": "https://api.secureiosms.com/getnumber?api_key=${credentials.apiKey}&service=${userData.service}",
+      "responseType": "JSON",
+      "responseMapping": {
+        "phoneNumber": "$.number",
+        "orderId": "$.id"
+      },
+      "errorCheck": {
+        "path": "$.error",
+        "messageField": "$.error"
+      }
+    },
+    "getMessage": {
+      "method": "GET",
+      "url": "https://api.secureiosms.com/checkstatus?api_key=${credentials.apiKey}&id=${session.orderId}",
+      "responseType": "JSON",
+      "responseMapping": {
+        "message": "$.code"
+      },
+      "pendingCheck": {
+        "type": "FIELD_ABSENT",
+        "path": "$.code"
+      },
+      "pollingIntervalSeconds": 5
+    },
+    "cancelPhoneNumber": {
+      "method": "POST",
+      "url": "https://api.secureiosms.com/changestatus?api_key=${credentials.apiKey}",
+      "body": {
+        "id": "${session.orderId}",
+        "action": "cancel"
+      },
+      "contentType": "application/x-www-form-urlencoded",
+      "responseType": "JSON"
+    }
+  }
+}

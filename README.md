@@ -123,6 +123,108 @@ python -m sams_automation watch --to jane@yourdomain.com   # just one
 
 Ctrl-C to stop. `--no-copy` disables the clipboard copy.
 
+## Checking SMS providers for Walmart numbers
+
+Separate from the membership flow, `sms-check` polls SMS-verification providers
+(TextVerified, 5sim, DaisySMS, SMSPool, and a dozen sites on the shared
+"activate" protocol) and reports which ones actually have Walmart numbers in
+stock, and at what price. It's read-only — it never buys a number.
+
+This part is standalone: it shares nothing with the Sam's Club membership flow
+above beyond living in the same repo.
+
+Easiest way in is the local web UI — a form for all the API keys, a live
+availability table, and a watch mode that alerts you when a pool refills:
+
+```bash
+./start.sh          # sets up its own Python env on first run, then opens the UI
+```
+
+`start.sh` exists because macOS has no `python` (only `python3`) and refuses
+`pip install` outside a virtualenv, which makes the plain commands below fail in
+a confusing way on a fresh Mac. It installs only PyYAML and Flask — Playwright
+is not needed for the SMS side.
+
+Or from the terminal:
+
+```bash
+./start.sh sms-check --list-providers   # what's wired up
+./start.sh sms-check                    # one-shot check
+./start.sh sms-check --watch            # alert on restock
+```
+
+Keys are entered in the web UI (stored in git-ignored `sms_keys.json`), or come
+from your environment (`DAISYSMS_API_KEY`, `SMSBOWER_API_KEY`, ...) or the
+`sms_providers:` block in `config.yaml`. 5sim needs no account at all,
+so `--provider 5sim` works out of the box.
+
+US Walmart pools are frequently empty — `--watch` exists because catching a
+restock matters more than any one-shot price comparison. Details, the full
+provider list, and how to add a site in config without writing code:
+**[docs/SMS_PROVIDERS.md](docs/SMS_PROVIDERS.md)**.
+
+Using AYCD Inbox instead? **[aycd/](aycd/)** has the same providers as Custom
+SMS schemas you can load there — including the four with bespoke APIs that
+Inbox has no native support for.
+
+## Adding a phone number to Walmart accounts
+
+**Setting this up for the first time: [docs/WALMART_SETUP.md](docs/WALMART_SETUP.md)**
+— Gmail app password, accounts, proxies, provider keys, and the selector-tuning
+loop, in order.
+
+**What the pages actually contain: [docs/WALMART_PAGE_MAP.md](docs/WALMART_PAGE_MAP.md)**
+— every sign-in screen, which control does what, and the traps, recorded from
+real runs. Written to be usable by any tool, not just this one.
+
+
+Buys a verification number and adds it to each account in
+`walmart_accounts.csv`, logging in through that account's proxy.
+
+```bash
+cp walmart_accounts.example.csv walmart_accounts.csv
+```
+
+Then edit `walmart_accounts.csv`. One account per line, colon-separated:
+
+```
+you@gmail.com:YourPassword
+you@gmail.com
+```
+
+Everything after the **first** colon is the password, so passwords containing
+colons or commas are safe. The password is optional — sign-in uses the code
+emailed to your catch-all, so an email on its own is a valid line. Proxies come
+from `walmart_proxies.txt`, not from here.
+
+Do a single account first, with a visible browser:
+
+```bash
+./start.sh walmart-add-phone --limit 1
+```
+
+Leave `purchasing.dry_run: true` for that first pass. It goes all the way to
+the phone form and reports exactly what it would have bought, without spending
+anything.
+
+**The first run will fail on a selector, and that's the point.** Every entry in
+`walmart.selectors` ships as a placeholder, so you'll get something like:
+
+```
+[FAIL] you@gmail.com  no selector configured for 'phone_input' —
+       set walmart.selectors.phone_input in config.yaml
+```
+
+along with `screenshots/walmart-*.png` for each step. Correct the selector in
+`config.yaml` and re-run. No code changes, same loop as the Sam's Club flow.
+
+Order of operations matters here: the number is bought only once the browser is
+on the phone form, because a bought number starts expiring immediately. A failed
+login costs nothing.
+
+`walmart_results.csv` records each outcome and drives resume, so re-running
+skips accounts that already succeeded (`--no-resume` to redo them).
+
 ## Getting it working the first time
 
 See **[docs/FIRST_RUN.md](docs/FIRST_RUN.md)** — a step-by-step for proving the
@@ -155,6 +257,8 @@ accounts.example.csv    # copy to accounts.csv (git-ignored)
 src/sams_automation/
   config.py             # load + validate config and the account list
   imap_client.py        # poll the catch-all mailbox, extract code/link
+  sms_providers.py      # SMS provider adapters + Walmart availability check
+  web_sms.py            # the /sms page: API keys, stock table, watch mode
   sams_flow.py          # Playwright login -> add-member -> verify
   runner.py             # loop over accounts, log results, pace requests
   cli.py                # run / check / test-imap commands

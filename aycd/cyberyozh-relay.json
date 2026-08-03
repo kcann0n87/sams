@@ -1,0 +1,155 @@
+{
+  "name": "CyberYozh (via local relay)",
+  "description": "app.cyberyozh.com — X-Api-Key header. Requires cyberyozh_purchase_relay.py running on 127.0.0.1:8765 (CyberYozh assigns phone_number asynchronously, so getPhoneNumber goes through the relay; getMessage/cancel call CyberYozh directly).",
+  "version": "1.0.1",
+  "author": "sams-automation",
+  "priceFormat": "USD",
+  "credentials": [
+    {
+      "name": "apiKey",
+      "label": "API Key",
+      "description": "app.cyberyozh.com > profile menu > API Keys",
+      "required": true
+    }
+  ],
+  "generalApi": {
+    "getBalance": {
+      "method": "GET",
+      "url": "https://app.cyberyozh.com/api/v2/users/balance/",
+      "headers": {
+        "X-Api-Key": "${credentials.apiKey}",
+        "accept": "application/json"
+      },
+      "responseType": "JSON",
+      "responseMapping": {
+        "balance": "$.balance"
+      }
+    }
+  },
+  "tempApi": {
+    "userDataFields": [
+      {
+        "name": "provider",
+        "label": "Provider type",
+        "description": "virtual is what actually issues Walmart numbers here. residential is non-VoIP and would be preferable, but its Walmart entries returned out-of-numbers. Rentals are the _rent variants — not what you want for one code.",
+        "required": true,
+        "defaultValue": "virtual"
+      },
+      {
+        "name": "service",
+        "label": "Service code",
+        "description": "Code from GET /numbers/services/. Residential codes look like se024415f170e25; virtual ones are short, like wr.",
+        "required": true,
+        "defaultValue": "wr"
+      },
+      {
+        "name": "country",
+        "label": "Country code",
+        "description": "Numeric code from GET /numbers/countries/, which returns 667 for \"United States America\". If a purchase comes back out-of-numbers, check this first — 187 is the SMS-Activate convention and is a different country here.",
+        "required": true,
+        "defaultValue": "667"
+      },
+      {
+        "name": "period",
+        "label": "Period",
+        "description": "MIN_15 is the only value for virtual and residential. Rentals take HOUR_4, DAY, WEEK and so on.",
+        "required": true,
+        "defaultValue": "MIN_15"
+      }
+    ],
+    "userDataConfigs": [
+      {
+        "name": "Walmart — virtual",
+        "values": {
+          "provider": "virtual",
+          "service": "wr",
+          "country": "667",
+          "period": "MIN_15"
+        }
+      },
+      {
+        "name": "Walmart — residential (returns OON)",
+        "values": {
+          "provider": "residential",
+          "service": "se024415f170e25",
+          "country": "667",
+          "period": "MIN_15"
+        }
+      },
+      {
+        "name": "Walmart Family Mobile — residential (untested)",
+        "values": {
+          "provider": "residential",
+          "service": "s9629aca71a8b02",
+          "country": "667",
+          "period": "MIN_15"
+        }
+      },
+      {
+        "name": "Walmart MoneyCard — residential (untested)",
+        "values": {
+          "provider": "residential",
+          "service": "s5e85c951385be4",
+          "country": "667",
+          "period": "MIN_15"
+        }
+      }
+    ],
+    "getPhoneNumber": {
+      "method": "POST",
+      "url": "http://127.0.0.1:8765/number",
+      "headers": {
+        "X-Api-Key": "${credentials.apiKey}",
+        "accept": "application/json"
+      },
+      "body": {
+        "provider": "${userData.provider}",
+        "service_code": "${userData.service}",
+        "country_code": "${userData.country}",
+        "period": "${userData.period}",
+        "need_fraud_score": false,
+        "markup_percent": 0
+      },
+      "contentType": "application/json",
+      "responseType": "JSON",
+      "responseMapping": {
+        "phoneNumber": "$.phone_number",
+        "orderId": "$.order_id"
+      },
+      "errorCheck": {
+        "path": "$.detail",
+        "messageField": "$.detail"
+      },
+      "rateLimit": {
+        "maxConcurrency": 1,
+        "delayMillis": 1000
+      }
+    },
+    "getMessage": {
+      "method": "GET",
+      "url": "https://app.cyberyozh.com/api/v1/numbers/${session.orderId}/",
+      "headers": {
+        "X-Api-Key": "${credentials.apiKey}",
+        "accept": "application/json"
+      },
+      "responseType": "JSON",
+      "responseMapping": {
+        "message": "$.history_sms_code[0]"
+      },
+      "pendingCheck": {
+        "type": "EMPTY_ARRAY",
+        "path": "$.history_sms_code"
+      },
+      "pollingIntervalSeconds": 5
+    },
+    "cancelPhoneNumber": {
+      "method": "PUT",
+      "url": "https://app.cyberyozh.com/api/v1/numbers/${session.orderId}/cancel/",
+      "headers": {
+        "X-Api-Key": "${credentials.apiKey}",
+        "accept": "application/json"
+      },
+      "responseType": "JSON"
+    }
+  }
+}
