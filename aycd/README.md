@@ -20,7 +20,7 @@ browser flow in the rest of this repo, and nothing to do with bot checks.
 | `sms-activation.json` | sms-activation-service.com | Maybe |
 | `smshub.json` | smshub.org | Maybe |
 | `activate-protocol.json` | any other handler_api.php clone — edit the host | Some |
-| `cyberyozh.json` | app.cyberyozh.com | No — and it sells **residential** numbers |
+| `cyberyozh.json` | app.cyberyozh.com | No — bespoke API, needs the local relay |
 
 ## How much to trust these
 
@@ -158,33 +158,39 @@ Residential codes are `s` plus a hash; virtual ones are short. The catalogue
 runs to **12,693 entries**, so anything else you need is in there — filter it
 by name rather than guessing a code.
 
-**The poll is the guess.** There may be no detail route for a single order, so
-`getMessage` reads `history_sms_code` off the **first** entry of the active
-orders list. That is fine when you buy one number at a time and wrong when you
-don't — with two orders in flight, the code from one could be handed to the
-other. If a detail route like `/api/v1/numbers/{pk}/` exists, use it:
+#### Polling
 
-```json
-"url": "https://app.cyberyozh.com/api/v1/numbers/${session.orderId}/",
-"responseMapping": {"message": "$.history_sms_code"},
-"pendingCheck": {"type": "FIELD_ABSENT", "path": "$.history_sms_code"}
+Both configs poll the per-order detail route,
+`GET /api/v1/numbers/${session.orderId}/`, so several numbers can be in flight
+without their codes being confused. An earlier version read the **first** entry
+of the active-orders list instead, which is only correct when you buy one at a
+time.
+
+If polling never completes despite a code having arrived, the likely cause is
+the order leaving that route once it's satisfied — completed orders move to
+`GET /history/`. Check there before assuming the provider dropped the message.
+
+`period: MIN_15` is the only value valid for a one-time number. The `_rent`
+variants are rentals and will hold the number, and your money, far longer than
+one code needs.
+
+#### You are charged at purchase, not at delivery
+
+Unlike the activate-family providers, CyberYozh takes the money on `POST
+/numbers/`. Any task that buys a number and then dies before submitting it
+leaves a paid order sitting there. A parallel run that fails at the browser
+step will drain a balance quickly and the provider will look blameless in the
+logs, because it did its job.
+
+To see what's outstanding and hand back the ones that never received a code:
+
+```
+python relay/cyberyozh_orders.py --key YOUR_KEY
+python relay/cyberyozh_orders.py --key YOUR_KEY --cancel-unused
 ```
 
-There is also a risk the order **leaves** the active list once its code
-arrives — that endpoint is documented as returning orders "currently awaiting
-an SMS code", and completed ones move to `GET /history/`. If polling never
-completes, that's why, and the detail route or `/history/` is the fix.
-
-**No cancel yet.** The order object has `can_cancel`, so a route exists, but
-it isn't in what I've seen of the docs. Without `cancelPhoneNumber` an unused
-number isn't refunded — it just expires.
-
-**Why bother:** `provider` accepts `residential`, which is non-VoIP. Walmart
-rejects a large share of VoIP numbers, so residential stock is a materially
-better bet than the cheap virtual pools, and none of the other providers here
-offer it. Pair it with `period: MIN_15`, which is the only period valid for
-one-time numbers — the `_rent` variants are rentals and not what you want for
-a single code.
+A run where most orders show "no code yet" is a browser-side failure, not a
+provider one.
 
 Errors are distinct and worth knowing: `402` insufficient balance, `400`
 validation or no numbers available, `429` rate limited. Auth is the

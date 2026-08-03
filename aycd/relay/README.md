@@ -36,7 +36,7 @@ Then load `../cyberyozh-relay.json` in Inbox. Your API key goes in Inbox as
 usual — the relay forwards whatever `X-Api-Key` it receives and stores
 nothing.
 
-Options: `--port`, `--assignment-timeout` (default 40s), `--poll-interval`
+Options: `--port`, `--assignment-timeout` (default 90s), `--poll-interval`
 (default 2s).
 
 ## Verified behaviour
@@ -49,8 +49,13 @@ Tested against a stubbed CyberYozh that reproduces the async assignment:
   CyberYozh arrives at Inbox as `400 no available numbers`, not as a relay
   failure. That distinction matters: it's the difference between "they're out
   of stock" and "your relay is broken".
-- **Timeout** — if no number is assigned within the window, it returns `504`
-  with the order id, so the order can be chased manually rather than lost.
+- **Timeout** — if no number is assigned within the window, the relay cancels
+  the order so it is refunded, then returns `504` carrying the order id and a
+  `cancelled` flag saying whether the refund went through.
+
+The relay window logs `Cancelled unassigned order … — refunded` when that
+happens. A `504` with no such line means you're running a build from before
+that fix, and the order was abandoned rather than handed back.
 
 ## Every purchase costs money the moment it is made
 
